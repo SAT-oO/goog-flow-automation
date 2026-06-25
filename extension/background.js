@@ -1,0 +1,273 @@
+/**
+ * Flow Image Automator — background service worker.
+ * Orchestrates sequential prompt processing and downloads.
+ */
+
+const FLOW_URL_PATTERNS = [
+  "https://labs.google/fx/tools/flow*",
+  "https://labs.google/flow*",
+];
+
+/** Delay between completed generations (ms). */
+const INTER_REQUEST_DELAY_MS = 2500;
+
+const state = {
+  running: false,
+  stopRequested: false,
+  currentIndex: 0,
+  prompts: [],
+  folder: "flow-images",
+  flowTabId: null,
+};
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function broadcast(message) {
+  chrome.runtime.sendMessage(message).catch(() => {});
+}
+
+function updateQueueStatus(patch) {
+  broadcast({ type: "QUEUE_UPDATE", data: patch });
+}
+
+async function saveState() {
+  await chrome.storage.local.set({
+    queueState: {
+      running: state.running,
+      currentIndex: state.currentIndex,
+      prompts: state.prompts,
+      folder: state.folder,
+    },
+  });
+}
+
+async function findFlowTab() {
+  for (const pattern of FLOW_URL_PATTERNS) {
+    const tabs = await chrome.tabs.query({ url: pattern });
+    if (tabs.length > 0) return tabs[0];
+  }
+  const tabs = await chrome.tabs.query({ url: "https://labs.google/*" });
+  return tabs.find((tab) => (tab.url || "").includes("flow")) || tabs[0] || null;
+}
+
+async function ensureContentScript(tabId) {
+  try {
+    const response = await Promise.race([
+      chrome.tabs.sendMessage(tabId, { type: "PING" }),
+      sleep(2000).then(() => {
+        throw new Error("ping timeout");
+      }),
+    ]);
+    if (response?.success) return;
+  } catch {
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content/flow.js"],
+  });
+  await sleep(500);
+}
+
+async function sendToContent(tabId, message) {
+  await ensureContentScript(tabId);
+  const response = await chrome.tabs.sendMessage(tabId, message);
+  if (!response?.success) {
+    throw new Error(response?.error || "Content script request failed");
+  }
+  return response.data;
+}
+
+async function downloadImage(url, folder, index, mimeType = "image/png") {
+  const safeFolder = folder.replace(/[\\/:*?"<>|]/g, "_") || "flow-images";
+  const ext = mimeType.includes("png")
+    ? "png"
+    : mimeType.includes("webp")
+      ? "webp"
+      : mimeType.includes("jpeg") || mimeType.includes("jpg")
+        ? "jpg"
+        : url.includes(".png")
+          ? "png"
+          : url.includes(".webp")
+            ? "webp"
+            : "jpg";
+  const filename = `${safeFolder}/flow_${String(index + 1).padStart(3, "0")}_${Date.now()}.${ext}`;
+
+  await chrome.downloads.download({
+    url,
+    filename,
+    saveAs: false,
+    conflictAction: "uniquify",
+  });
+}
+
+async function processQueue() {
+  if (state.running) return;
+  state.running = true;
+  state.stopRequested = false;
+  await saveState();
+  updateQueueStatus({ running: true, currentIndex: state.currentIndex });
+
+  try {
+    const tab = await findFlowTab();
+    if (!tab?.id) {
+      throw new Error("Open Google Flow (labs.google/fx/tools/flow) in Safari first");
+    }
+    state.flowTabId = tab.id;
+    await chrome.tabs.update(tab.id, { active: true });
+
+    const status = await sendToContent(tab.id, { type: "GET_STATUS" });
+    if (!status.onFlowPage) {
+      throw new Error("The active tab is not a Google Flow project page");
+    }
+    if (status.agentModeOn) {
+      throw new Error("Agent mode is ON — turn it off in Google Flow before starting");
+    }
+    if (!status.hasPromptInput) {
+      throw new Error("Could not find the prompt box — open a Flow project first");
+    }
+
+    for (let i = state.currentIndex; i < state.prompts.length; i += 1) {
+      if (state.stopRequested) break;
+
+      const prompt = state.prompts[i];
+      state.currentIndex = i;
+      await saveState();
+
+      updateQueueStatus({
+        running: true,
+        currentIndex: i,
+        itemStatus: { index: i, status: "generating", prompt },
+      });
+
+      const result = await sendToContent(tab.id, {
+        type: "GENERATE_IMAGE",
+        prompt,
+      });
+
+      if (state.stopRequested) break;
+
+      const images = result.images || [];
+      for (const image of images) {
+        await downloadImage(image.url, state.folder, i, image.mimeType);
+      }
+
+      try {
+        await sendToContent(tab.id, { type: "DOWNLOAD_LATEST" });
+      } catch {
+        // UI download is a best-effort fallback
+      }
+
+      updateQueueStatus({
+        running: true,
+        currentIndex: i,
+        itemStatus: { index: i, status: "done", prompt, imageCount: images.length },
+      });
+
+      if (i < state.prompts.length - 1 && !state.stopRequested) {
+        await sleep(INTER_REQUEST_DELAY_MS);
+      }
+    }
+
+    const finished = !state.stopRequested && state.currentIndex >= state.prompts.length - 1;
+    updateQueueStatus({
+      running: false,
+      currentIndex: state.currentIndex,
+      finished,
+      stopped: state.stopRequested,
+    });
+  } catch (error) {
+    updateQueueStatus({
+      running: false,
+      error: error.message,
+      currentIndex: state.currentIndex,
+    });
+  } finally {
+    state.running = false;
+    if (!state.stopRequested) {
+      state.currentIndex = 0;
+    }
+    await saveState();
+  }
+}
+
+chrome.action.onClicked.addListener(async (tab) => {
+  if (!chrome.sidePanel?.open) return;
+  try {
+    await chrome.sidePanel.open({ windowId: tab.windowId });
+  } catch {
+    // Side panel may be unavailable; user can open via Safari toolbar
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  const handle = async () => {
+    switch (message.type) {
+      case "START_QUEUE": {
+        if (state.running) {
+          return { success: false, error: "Generation is already running" };
+        }
+        const { prompts, folder, startIndex = 0 } = message.data || {};
+        if (!Array.isArray(prompts) || prompts.length === 0) {
+          return { success: false, error: "No prompts in queue" };
+        }
+        state.prompts = prompts;
+        state.folder = folder || "flow-images";
+        state.currentIndex = Math.max(0, startIndex);
+        state.stopRequested = false;
+        processQueue();
+        return { success: true };
+      }
+      case "STOP_QUEUE": {
+        state.stopRequested = true;
+        updateQueueStatus({ running: false, stopped: true, currentIndex: state.currentIndex });
+        return { success: true };
+      }
+      case "GET_QUEUE_STATE":
+        return {
+          success: true,
+          data: {
+            running: state.running,
+            currentIndex: state.currentIndex,
+            prompts: state.prompts,
+            folder: state.folder,
+            interRequestDelayMs: INTER_REQUEST_DELAY_MS,
+          },
+        };
+      case "CHECK_FLOW_TAB": {
+        const tab = await findFlowTab();
+        if (!tab?.id) {
+          return { success: true, data: { connected: false } };
+        }
+        try {
+          const status = await sendToContent(tab.id, { type: "GET_STATUS" });
+          return { success: true, data: { connected: true, tabId: tab.id, ...status } };
+        } catch (error) {
+          return {
+            success: true,
+            data: { connected: false, tabId: tab.id, error: error.message },
+          };
+        }
+      }
+      default:
+        return { success: false, error: `Unknown message: ${message.type}` };
+    }
+  };
+
+  handle()
+    .then((result) => sendResponse(result))
+    .catch((error) => sendResponse({ success: false, error: error.message }));
+  return true;
+});
+
+chrome.storage.local.get(["queueState"], (result) => {
+  const saved = result.queueState;
+  if (!saved) return;
+  state.prompts = saved.prompts || [];
+  state.folder = saved.folder || "flow-images";
+  state.currentIndex = saved.currentIndex || 0;
+});
+
+console.log("Flow Image Automator background worker ready");

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flow Image Automator</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="logo">Flow Image Automator</div>
+        <p class="subtitle">Bulk image generation for Google Flow</p>
+      </header>
+
+      <section class="status-bar" id="statusBar">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Checking connection…</span>
+      </section>
+
+      <section class="alert hidden" id="agentAlert">
+        Agent mode is ON. Turn it off in Google Flow before starting.
+      </section>
+
+      <section class="field">
+        <label for="promptInput">Prompts</label>
+        <p class="hint">One prompt per line, or separate paragraphs with a blank line.</p>
+        <textarea
+          id="promptInput"
+          rows="8"
+          placeholder="A serene mountain lake at sunrise&#10;&#10;A futuristic city skyline at night&#10;&#10;A cozy coffee shop interior"
+        ></textarea>
+        <div class="row">
+          <label class="file-btn">
+            Import .txt
+            <input type="file" id="fileInput" accept=".txt,text/plain" hidden />
+          </label>
+          <button type="button" class="ghost" id="parseBtn">Refresh preview</button>
+        </div>
+      </section>
+
+      <section class="field">
+        <label for="folderInput">Download folder</label>
+        <p class="hint">Saved to <code>~/Downloads/[folder name]</code></p>
+        <input
+          type="text"
+          id="folderInput"
+          value="flow-images"
+          placeholder="flow-images"
+          spellcheck="false"
+        />
+      </section>
+
+      <section class="preview">
+        <div class="preview-header">
+          <h2>Prompt queue</h2>
+          <span class="badge" id="queueCount">0 prompts</span>
+        </div>
+        <ol class="queue-list" id="queueList"></ol>
+        <p class="empty" id="emptyQueue">No prompts yet — paste text or import a .txt file.</p>
+      </section>
+
+      <section class="actions">
+        <button type="button" class="primary" id="startBtn">Start generation</button>
+        <button type="button" class="danger" id="stopBtn" disabled>Stop</button>
+      </section>
+
+      <section class="progress hidden" id="progressSection">
+        <div class="progress-text" id="progressText">Idle</div>
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <p>Sequential delay: <strong id="delayLabel">2500</strong> ms between images</p>
+        <p>Open <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noreferrer">Google Flow</a> and disable Agent mode first.</p>
+      </footer>
+    </div>
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>

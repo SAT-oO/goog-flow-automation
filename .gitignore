@@ -1,0 +1,12 @@
+.DS_Store
+*.xcuserstate
+xcuserdata/
+DerivedData/
+build/
+*.log
+
+# Xcode generated app wrapper
+Flow Image Automator/
+
+# Sample output
+sample-prompts.txt
