@@ -25,6 +25,7 @@ const els = {
   emptyQueue: document.getElementById("emptyQueue"),
   startBtn: document.getElementById("startBtn"),
   pauseBtn: document.getElementById("pauseBtn"),
+  restartBtn: document.getElementById("restartBtn"),
   stopBtn: document.getElementById("stopBtn"),
   tabRun: document.getElementById("tabRun"),
   tabErrors: document.getElementById("tabErrors"),
@@ -35,9 +36,8 @@ const els = {
   errorLogCount: document.getElementById("errorLogCount"),
   emptyErrorLog: document.getElementById("emptyErrorLog"),
   clearErrorsBtn: document.getElementById("clearErrorsBtn"),
-  progressSection: document.getElementById("progressSection"),
-  progressText: document.getElementById("progressText"),
-  progressFill: document.getElementById("progressFill"),
+  queueProgress: document.getElementById("queueProgress"),
+  queueProgressDetail: document.getElementById("queueProgressDetail"),
   delayLabel: document.getElementById("delayLabel"),
   retryAttemptsLabel: document.getElementById("retryAttemptsLabel"),
 };
@@ -52,6 +52,7 @@ let running = false;
 let paused = false;
 let currentQueueIndex = -1;
 let errorLogs = [];
+let highlightedErrorLogId = null;
 
 function applyStatusBar(barEl, dotEl, textEl, state, text) {
   barEl.classList.remove("pass", "fail", "null");
@@ -146,6 +147,10 @@ function resolveItemStatus(index) {
   return existing;
 }
 
+function isFailedQueueStatus(status) {
+  return status === "error" || status === "skipped" || status === "retrying";
+}
+
 function renderQueue() {
   els.queueList.innerHTML = "";
   const indexDigits = Math.max(1, String(prompts.length || 1).length);
@@ -153,9 +158,17 @@ function renderQueue() {
 
   prompts.forEach((prompt, index) => {
     const li = document.createElement("li");
+    li.dataset.index = String(index);
     const item = resolveItemStatus(index) || {};
     const status = item?.status;
     if (status) li.classList.add(status);
+    if (running && index === currentQueueIndex) li.classList.add("current");
+
+    if (isFailedQueueStatus(status)) {
+      li.classList.add("queue-item-clickable");
+      li.title = "View error logs for this prompt";
+      li.addEventListener("click", () => navigateToErrorLogForPrompt(index));
+    }
 
     const indexEl = document.createElement("span");
     indexEl.className = "queue-item-index";
@@ -197,10 +210,58 @@ function renderQueue() {
   els.emptyQueue.classList.toggle("hidden", hasPrompts);
   els.queueList.classList.toggle("hidden", !hasPrompts);
   els.queueCount.textContent = `${prompts.length} prompt${prompts.length === 1 ? "" : "s"}`;
+  scrollQueueToCurrent();
   if (els.scrollViewport) {
     requestAnimationFrame(() => {
       els.scrollViewport.dispatchEvent(new Event("scroll"));
     });
+  }
+}
+
+function scrollQueueToCurrent() {
+  if (!running || currentQueueIndex < 0 || !els.queueList) return;
+  requestAnimationFrame(() => {
+    const item = els.queueList.querySelector(`li[data-index="${currentQueueIndex}"]`);
+    item?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+}
+
+function countCompletedItems() {
+  return Object.values(itemStatuses).filter((item) => item.status === "done" || item.status === "skipped").length;
+}
+
+function updateProgress(currentIndex, total, detailLabel) {
+  const totalCount = total || prompts.length;
+  const displayIndex = totalCount > 0 ? Math.min(currentIndex + 1, totalCount) : 0;
+  const completed = countCompletedItems();
+  const pct = totalCount > 0 ? Math.round((completed / totalCount) * 100) : 0;
+
+  if (els.queueProgress) {
+    if (running && totalCount > 0) {
+      els.queueProgress.textContent = `${displayIndex} / ${totalCount}`;
+      els.queueProgress.classList.remove("hidden");
+    } else if (!running && completed > 0) {
+      els.queueProgress.textContent = `${completed} / ${totalCount}`;
+      els.queueProgress.classList.remove("hidden");
+    } else {
+      els.queueProgress.classList.add("hidden");
+    }
+  }
+
+  if (els.queueProgressDetail) {
+    if (detailLabel && running) {
+      els.queueProgressDetail.textContent = detailLabel;
+      els.queueProgressDetail.classList.remove("hidden");
+    } else if (!running && detailLabel) {
+      els.queueProgressDetail.textContent = detailLabel;
+      els.queueProgressDetail.classList.remove("hidden");
+    } else {
+      els.queueProgressDetail.classList.add("hidden");
+    }
+  }
+
+  if (els.queueProgress && running && totalCount > 0) {
+    els.queueProgress.title = `${pct}% complete (${completed} finished)`;
   }
 }
 
@@ -227,6 +288,11 @@ function renderErrorLogs() {
   els.errorLogList.innerHTML = "";
   errorLogs.forEach((entry) => {
     const li = document.createElement("li");
+    li.id = `error-log-${entry.id}`;
+    li.dataset.promptIndex = String(entry.index);
+    if (entry.id === highlightedErrorLogId) {
+      li.classList.add("highlighted");
+    }
 
     const meta = document.createElement("div");
     meta.className = "error-meta";
@@ -266,7 +332,7 @@ async function loadErrorLogs() {
   renderErrorLogs();
 }
 
-function switchTab(tabName) {
+function switchTab(tabName, options = {}) {
   const isRun = tabName === "run";
   els.tabRun?.classList.toggle("active", isRun);
   els.tabErrors?.classList.toggle("active", !isRun);
@@ -276,7 +342,11 @@ function switchTab(tabName) {
   els.errorPanel?.classList.toggle("hidden", isRun);
 
   if (!isRun) {
-    loadErrorLogs();
+    loadErrorLogs().then(() => {
+      if (typeof options.highlightPromptIndex === "number") {
+        scrollToErrorLogForPrompt(options.highlightPromptIndex);
+      }
+    });
   }
 
   if (els.scrollViewport) {
@@ -286,11 +356,41 @@ function switchTab(tabName) {
   }
 }
 
+function scrollToErrorLogForPrompt(promptIndex) {
+  const match =
+    errorLogs.find((entry) => entry.index === promptIndex) ||
+    errorLogs.find((entry) => String(entry.index) === String(promptIndex));
+  if (!match) return;
+
+  highlightedErrorLogId = match.id;
+  renderErrorLogs();
+
+  requestAnimationFrame(() => {
+    const el = document.getElementById(`error-log-${match.id}`);
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setTimeout(() => {
+      if (highlightedErrorLogId === match.id) {
+        highlightedErrorLogId = null;
+        el?.classList.remove("highlighted");
+      }
+    }, 4000);
+  });
+}
+
+function navigateToErrorLogForPrompt(promptIndex) {
+  switchTab("errors", { highlightPromptIndex: promptIndex });
+}
+
 function updatePauseButton() {
   if (!els.pauseBtn) return;
   els.pauseBtn.disabled = !running;
   els.pauseBtn.textContent = paused ? "Resume" : "Pause";
   els.pauseBtn.classList.toggle("is-resume", paused);
+
+  if (els.restartBtn) {
+    els.restartBtn.classList.toggle("hidden", !running || !paused);
+    els.restartBtn.disabled = !running || !paused;
+  }
 }
 
 function showPreviewRefreshFeedback() {
@@ -394,13 +494,6 @@ async function checkConnection() {
   updateStartButton(connectionPass, agentPass);
 }
 
-function updateProgress(currentIndex, total, label) {
-  els.progressSection.classList.remove("hidden");
-  const pct = total > 0 ? Math.round(((currentIndex + 1) / total) * 100) : 0;
-  els.progressFill.style.width = `${pct}%`;
-  els.progressText.textContent = label;
-}
-
 async function startGeneration() {
   refreshPromptsFromInput();
   if (!prompts.length) return;
@@ -434,6 +527,20 @@ async function startGeneration() {
   } else {
     updateProgress(0, prompts.length, "Starting…");
   }
+}
+
+async function restartGeneration() {
+  if (!running || !paused) return;
+
+  const response = await chrome.runtime.sendMessage({ type: "RESTART_QUEUE" });
+  if (!response?.success) return;
+
+  paused = false;
+  currentQueueIndex = 0;
+  itemStatuses = {};
+  updatePauseButton();
+  updateProgress(0, prompts.length, "Restarting pipeline from prompt 1…");
+  renderQueue();
 }
 
 async function stopGeneration() {
@@ -501,6 +608,7 @@ els.folderInput.addEventListener("change", () => {
 
 els.startBtn.addEventListener("click", startGeneration);
 els.pauseBtn?.addEventListener("click", togglePause);
+els.restartBtn?.addEventListener("click", restartGeneration);
 els.stopBtn.addEventListener("click", stopGeneration);
 els.tabRun?.addEventListener("click", () => switchTab("run"));
 els.tabErrors?.addEventListener("click", () => switchTab("errors"));
@@ -523,10 +631,18 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (typeof data.currentIndex === "number") {
     currentQueueIndex = data.currentIndex;
+    scrollQueueToCurrent();
   }
   if (typeof data.paused === "boolean") {
     paused = data.paused;
     updatePauseButton();
+  }
+
+  if (data.restarted) {
+    itemStatuses = {};
+    currentQueueIndex = 0;
+    updateProgress(0, prompts.length, "Restarting pipeline from prompt 1…");
+    renderQueue();
   }
 
   if (data.itemStatus) {
@@ -555,6 +671,7 @@ chrome.runtime.onMessage.addListener((message) => {
       label = `Generating prompt ${idx + 1} of ${prompts.length} (attempt ${item.attempt || 1}/${maxAttempts})…`;
     }
     updateProgress(idx, prompts.length, label);
+    scrollQueueToCurrent();
   }
 
   if (data.running === false) {
@@ -611,7 +728,9 @@ chrome.runtime.sendMessage({ type: "GET_QUEUE_STATE" }).then((response) => {
     els.stopBtn.disabled = false;
     updatePauseButton();
     updateClearButtonState();
-    els.progressSection.classList.remove("hidden");
+    if (currentQueueIndex >= 0) {
+      updateProgress(currentQueueIndex, response.data.prompts?.length || prompts.length, "");
+    }
   }
 });
 

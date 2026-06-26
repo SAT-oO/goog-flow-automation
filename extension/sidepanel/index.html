@@ -33,7 +33,7 @@
           Run
         </button>
         <button type="button" class="tab" id="tabErrors" role="tab" aria-selected="false" aria-controls="errorPanel">
-          Error log
+          Error logs
           <span class="tab-badge hidden" id="errorBadge">0</span>
         </button>
       </section>
@@ -44,7 +44,7 @@
         <p class="hint">One prompt per line, or separate paragraphs with a blank line.</p>
         <textarea
           id="promptInput"
-          rows="16"
+          rows="8"
           placeholder="A serene mountain lake at sunrise&#10;&#10;A futuristic city skyline at night&#10;&#10;A cozy coffee shop interior"
         ></textarea>
         <div class="row">
@@ -72,9 +72,13 @@
       <section class="preview" id="previewSection">
         <div class="preview-header">
           <h2>Prompt queue</h2>
-          <span class="badge" id="queueCount">0 prompts</span>
+          <div class="preview-header-meta">
+            <span class="queue-progress hidden" id="queueProgress" aria-live="polite">0 / 0</span>
+            <span class="badge" id="queueCount">0 prompts</span>
+          </div>
         </div>
         <p class="preview-status hidden" id="previewStatus" aria-live="polite"></p>
+        <p class="queue-progress-detail hidden" id="queueProgressDetail" aria-live="polite"></p>
         <ul class="queue-list" id="queueList"></ul>
         <p class="empty" id="emptyQueue">No prompts yet — paste text or import a .txt file.</p>
       </section>
@@ -82,19 +86,13 @@
       <section class="actions">
         <button type="button" class="primary" id="startBtn">Start generation</button>
         <button type="button" class="secondary" id="pauseBtn" disabled>Pause</button>
+        <button type="button" class="secondary hidden" id="restartBtn" disabled>Restart</button>
         <button type="button" class="danger" id="stopBtn" disabled>Stop</button>
-      </section>
-
-      <section class="progress hidden" id="progressSection">
-        <div class="progress-text" id="progressText">Idle</div>
-        <div class="progress-track">
-          <div class="progress-fill" id="progressFill"></div>
-        </div>
       </section>
 
       <footer class="footer">
         <p>Sequential delay: <strong id="delayLabel">2500</strong> ms between images</p>
-        <p>Failed prompts are retried up to <strong id="retryAttemptsLabel">3</strong> times, then skipped. Use <strong>Pause</strong> to halt between steps.</p>
+        <p>Failed prompts are retried up to <strong id="retryAttemptsLabel">3</strong> times, then skipped. <strong>Pause</strong> to halt; <strong>Restart</strong> (while paused) runs the full queue again from prompt 1.</p>
         <p>Open <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noreferrer">Google Flow</a> in a project before starting.</p>
       </footer>
       </div>

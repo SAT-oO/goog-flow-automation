@@ -34,6 +34,7 @@ const state = {
   running: false,
   paused: false,
   stopRequested: false,
+  restartRequested: false,
   currentIndex: 0,
   prompts: [],
   folder: "flow-images",
@@ -46,12 +47,14 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Sleep in small chunks so pause/stop can interrupt retry delays. */
+/** Sleep in small chunks so pause/stop/restart can interrupt retry delays. */
 async function interruptibleSleep(ms) {
   const chunk = 200;
   let remaining = ms;
   while (remaining > 0) {
-    if (state.stopRequested) throw new Error("Stopped by user");
+    if (state.stopRequested || state.restartRequested) {
+      throw new Error(state.restartRequested ? "Restarting pipeline" : "Stopped by user");
+    }
     await waitIfPaused();
     const step = Math.min(chunk, remaining);
     await sleep(step);
@@ -60,11 +63,11 @@ async function interruptibleSleep(ms) {
 }
 
 async function waitIfPaused() {
-  while (state.paused && !state.stopRequested) {
+  while (state.paused && !state.stopRequested && !state.restartRequested) {
     await sleep(250);
   }
-  if (state.stopRequested) {
-    throw new Error("Stopped by user");
+  if (state.stopRequested || state.restartRequested) {
+    throw new Error(state.restartRequested ? "Restarting pipeline" : "Stopped by user");
   }
 }
 
@@ -168,10 +171,10 @@ async function downloadImage(url, folder, index, mimeType = "image/png") {
 async function generateWithRetry(tabId, prompt, index) {
   let delay = INITIAL_RETRY_DELAY_MS;
 
-  for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt += 1) {
+    for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt += 1) {
     await waitIfPaused();
-    if (state.stopRequested) {
-      throw new Error("Stopped by user");
+    if (state.stopRequested || state.restartRequested) {
+      throw new Error(state.restartRequested ? "Restarting pipeline" : "Stopped by user");
     }
 
     try {
@@ -197,8 +200,8 @@ async function generateWithRetry(tabId, prompt, index) {
 
       return result;
     } catch (error) {
-      if (state.stopRequested) {
-        throw new Error("Stopped by user");
+      if (state.restartRequested || state.stopRequested) {
+        throw error;
       }
 
       await appendErrorLog({
@@ -368,25 +371,46 @@ async function processQueue() {
       }
     }
 
-    const processedAll = !state.stopRequested && successCount + skippedCount === state.prompts.length;
+    const processedAll =
+      !state.stopRequested &&
+      !state.restartRequested &&
+      successCount + skippedCount === state.prompts.length;
     updateQueueStatus({
       running: false,
       paused: false,
       currentIndex: state.currentIndex,
       finished: processedAll,
-      stopped: state.stopRequested,
+      stopped: state.stopRequested && !state.restartRequested,
+      restarted: state.restartRequested,
       successCount,
       skippedCount,
     });
   } catch (error) {
-    updateQueueStatus({
-      running: false,
-      paused: false,
-      error: error.message,
-      currentIndex: state.currentIndex,
-    });
+    if (state.restartRequested) {
+      // Restart is intentional — handled in finally.
+    } else {
+      updateQueueStatus({
+        running: false,
+        paused: false,
+        error: error.message,
+        currentIndex: state.currentIndex,
+      });
+    }
   } finally {
+    const shouldRestart = state.restartRequested;
     state.running = false;
+
+    if (shouldRestart) {
+      state.restartRequested = false;
+      state.stopRequested = false;
+      state.paused = false;
+      state.currentIndex = 0;
+      await saveState();
+      updateQueueStatus({ running: true, restarted: true, currentIndex: 0, paused: false });
+      processQueue();
+      return;
+    }
+
     state.paused = false;
     if (!state.stopRequested) {
       state.currentIndex = 0;
@@ -447,6 +471,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         state.paused = false;
         updateQueueStatus({ running: true, paused: false, currentIndex: state.currentIndex });
         return { success: true, data: { paused: false } };
+      }
+      case "RESTART_QUEUE": {
+        if (!state.running) {
+          return { success: false, error: "Nothing is running" };
+        }
+        state.restartRequested = true;
+        state.stopRequested = true;
+        state.paused = false;
+        state.currentIndex = 0;
+        if (state.flowTabId) {
+          chrome.tabs.sendMessage(state.flowTabId, { type: "STOP_GENERATION" }).catch(() => {});
+        }
+        return { success: true };
       }
       case "STOP_QUEUE": {
         state.stopRequested = true;
