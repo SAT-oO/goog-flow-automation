@@ -72,15 +72,233 @@
 
     const pasted = document.execCommand("insertText", false, text);
     if (!pasted) {
-      if (element.tagName === "TEXTAREA" || element.tagName === "INPUT") {
+      const proto =
+        element.tagName === "TEXTAREA"
+          ? window.HTMLTextAreaElement.prototype
+          : element.tagName === "INPUT"
+            ? window.HTMLInputElement.prototype
+            : null;
+      const setter = proto
+        ? Object.getOwnPropertyDescriptor(proto, "value")?.set
+        : null;
+
+      if (setter) {
+        setter.call(element, text);
+      } else if (element.tagName === "TEXTAREA" || element.tagName === "INPUT") {
         element.value = text;
       } else {
         element.textContent = text;
       }
-      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(
+        new InputEvent("input", { bubbles: true, inputType: "insertText", data: text })
+      );
       element.dispatchEvent(new Event("change", { bubbles: true }));
     }
     await sleep(200);
+  }
+
+  function getSlateEditor() {
+    const inputDiv = document.querySelector('[data-slate-editor="true"]');
+    if (!inputDiv) return null;
+
+    const fiberKey = Object.keys(inputDiv).find(
+      (key) => key.startsWith("__reactFiber") || key.startsWith("__reactInternalInstance")
+    );
+    if (!fiberKey) return null;
+
+    let current = inputDiv[fiberKey];
+    for (let depth = 0; depth < 40 && current; depth += 1) {
+      if (current.memoizedProps?.editor?.children) {
+        return { editor: current.memoizedProps.editor, element: inputDiv };
+      }
+      current = current.return;
+    }
+    return null;
+  }
+
+  async function typeIntoSlate(text) {
+    const slate = getSlateEditor();
+    if (!slate) return false;
+
+    const { editor, element } = slate;
+    element.focus();
+    await sleep(120);
+
+    try {
+      const currentText = editor.children[0]?.children[0]?.text || "";
+      editor.select({
+        anchor: { path: [0, 0], offset: 0 },
+        focus: { path: [0, 0], offset: currentText.length },
+      });
+      if (currentText.length > 0) {
+        editor.deleteFragment();
+      }
+      editor.insertText(text);
+      if (typeof editor.onChange === "function") {
+        editor.onChange();
+      }
+      await sleep(350);
+      return true;
+    } catch (error) {
+      console.warn("Flow Automator: Slate insert failed", error);
+      return false;
+    }
+  }
+
+  function getComposerRoot() {
+    const slate = document.querySelector('[data-slate-editor="true"]');
+    if (slate) {
+      return (
+        slate.closest("form") ||
+        slate.closest('[class*="composer" i]') ||
+        slate.closest('[class*="prompt" i]') ||
+        slate.parentElement?.parentElement?.parentElement ||
+        document.body
+      );
+    }
+
+    const textarea = document.querySelector("#PINHOLE_TEXT_AREA_ELEMENT_ID");
+    if (textarea) {
+      return textarea.closest("form") || textarea.parentElement?.parentElement || document.body;
+    }
+
+    return document.body;
+  }
+
+  function buttonHasArrowForward(btn) {
+    const icon = btn.querySelector("i.google-symbols, i.material-icons, span.google-symbols");
+    const iconText = (icon?.textContent || "").trim();
+    const btnText = (btn.textContent || "").trim();
+    return iconText === "arrow_forward" || btnText.includes("arrow_forward");
+  }
+
+  function isSubmitLabel(text) {
+    const normalized = (text || "").toLowerCase();
+    return ["create", "generate", "criar", "créer", "erstellen", "作成", "生成", "만들기"].some(
+      (label) => normalized.includes(label)
+    );
+  }
+
+  function findSubmitButton(searchRoot = getComposerRoot()) {
+    const avoid = [
+      "expand",
+      "edit",
+      "settings",
+      "more",
+      "menu",
+      "copy",
+      "download",
+      "tune",
+      "agent",
+      "clear",
+      "restart",
+    ];
+
+    const shouldAvoid = (btn) => {
+      const text = (btn.textContent || "").toLowerCase();
+      const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+      return avoid.some((word) => text.includes(word) || aria.includes(word));
+    };
+
+    const buttons = Array.from(searchRoot.querySelectorAll("button"));
+    const candidates = buttons.filter(
+      (btn) => isVisible(btn) && !shouldAvoid(btn) && buttonHasArrowForward(btn)
+    );
+
+    for (const btn of candidates) {
+      if (!btn.disabled && isSubmitLabel(btn.textContent || "")) return btn;
+    }
+    for (const btn of candidates) {
+      if (!btn.disabled) return btn;
+    }
+    return candidates[0] || null;
+  }
+
+  async function waitForSubmitEnabled(timeoutMs = 12000) {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      const btn = findSubmitButton();
+      if (btn && !btn.disabled) return btn;
+      await sleep(200);
+    }
+    throw new Error("Create button stayed disabled after entering the prompt");
+  }
+
+  async function typePrompt(prompt) {
+    if (await typeIntoSlate(prompt)) {
+      await waitForSubmitEnabled();
+      return getSlateEditor()?.element || document.querySelector('[data-slate-editor="true"]');
+    }
+
+    const input = getPromptInput();
+    if (!input) {
+      throw new Error("Could not find the prompt input on Google Flow");
+    }
+
+    if (input.tagName === "TEXTAREA" || input.tagName === "INPUT") {
+      await typeText(input, prompt, true);
+    } else {
+      await typeText(input, prompt, true);
+    }
+
+    await waitForSubmitEnabled();
+    return input;
+  }
+
+  async function clickSubmitButton(btn) {
+    btn.scrollIntoView({ behavior: "smooth", block: "center" });
+    await sleep(200);
+
+    const rect = btn.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const eventInit = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window };
+
+    btn.dispatchEvent(new PointerEvent("pointerover", eventInit));
+    btn.dispatchEvent(new MouseEvent("mouseover", eventInit));
+    btn.dispatchEvent(new PointerEvent("pointerdown", eventInit));
+    btn.dispatchEvent(new MouseEvent("mousedown", eventInit));
+    btn.dispatchEvent(new PointerEvent("pointerup", eventInit));
+    btn.dispatchEvent(new MouseEvent("mouseup", eventInit));
+    btn.dispatchEvent(new MouseEvent("click", eventInit));
+    btn.click();
+    await sleep(400);
+  }
+
+  async function submitViaKeyboard(target) {
+    if (!target) return false;
+    target.focus();
+    await sleep(120);
+
+    const combos = [
+      { key: "Enter", code: "Enter", keyCode: 13 },
+      { key: "Enter", code: "Enter", keyCode: 13, metaKey: true },
+    ];
+
+    for (const combo of combos) {
+      target.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...combo })
+      );
+      target.dispatchEvent(
+        new KeyboardEvent("keyup", { bubbles: true, cancelable: true, ...combo })
+      );
+      await sleep(400);
+      if (isGenerating()) return true;
+    }
+    return false;
+  }
+
+  function hasGenerationStarted() {
+    return isGenerating() || Boolean(findStopButton());
+  }
+
+  function findStopButton() {
+    return Array.from(document.querySelectorAll("button")).find((btn) => {
+      if (!isVisible(btn)) return false;
+      const text = (btn.textContent || "").toLowerCase();
+      const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+      return text.includes("stop") || aria.includes("stop");
+    });
   }
 
   function isOnFlowPage() {
@@ -162,6 +380,7 @@
 
   function getPromptInput() {
     return (
+      document.querySelector('[data-slate-editor="true"]') ||
       document.querySelector("#PINHOLE_TEXT_AREA_ELEMENT_ID") ||
       document.querySelector('textarea[placeholder*="Generate" i]') ||
       document.querySelector('[contenteditable="true"]') ||
@@ -170,6 +389,8 @@
   }
 
   function isGenerating() {
+    if (findStopButton()) return true;
+
     const busy = document.querySelector(
       '[role="progressbar"], [aria-busy="true"], [class*="loading" i], [class*="spinner" i], [class*="generating" i]'
     );
@@ -203,46 +424,35 @@
     return Array.from(urls);
   }
 
-  async function clickGenerate() {
-    await sleep(300);
-    const avoid = ["expand", "edit", "settings", "more", "menu", "copy", "download", "tune", "agent"];
+  async function clickGenerate(promptInput) {
+    await sleep(400);
 
-    const shouldAvoid = (btn) => {
-      const text = (btn.textContent || "").toLowerCase();
-      const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
-      return avoid.some((word) => text.includes(word) || aria.includes(word));
-    };
-
-    const buttons = Array.from(document.querySelectorAll("button:not([disabled])"));
-
-    for (const btn of buttons) {
-      if (!isVisible(btn) || shouldAvoid(btn)) continue;
-      const html = btn.innerHTML || "";
-      const text = (btn.textContent || "").toLowerCase();
-      if (html.includes("arrow_forward") && text.includes("create")) {
-        await clickElement(btn);
-        return true;
-      }
+    let btn = findSubmitButton();
+    if (!btn || btn.disabled) {
+      btn = await waitForSubmitEnabled();
     }
 
-    for (const btn of buttons) {
-      if (!isVisible(btn) || shouldAvoid(btn)) continue;
-      const text = (btn.textContent || "").toLowerCase().trim();
-      if (text === "create" || text === "generate") {
-        await clickElement(btn);
-        return true;
-      }
+    if (btn && !btn.disabled) {
+      await clickSubmitButton(btn);
+      await sleep(600);
+      if (hasGenerationStarted()) return true;
     }
 
-    for (const btn of buttons) {
-      if (!isVisible(btn) || shouldAvoid(btn)) continue;
-      if ((btn.innerHTML || "").includes("arrow_forward")) {
-        await clickElement(btn);
-        return true;
-      }
+    if (await submitViaKeyboard(promptInput)) return true;
+
+    btn =
+      findSubmitButton(document.body) ||
+      Array.from(document.querySelectorAll("button")).find(
+        (candidate) => isVisible(candidate) && buttonHasArrowForward(candidate) && !candidate.disabled
+      );
+
+    if (btn) {
+      await clickSubmitButton(btn);
+      await sleep(600);
+      if (hasGenerationStarted()) return true;
     }
 
-    throw new Error("Could not find the Create / Generate button");
+    throw new Error("Could not submit prompt — the Create button did not start generation");
   }
 
   async function clickDownloadButtons() {
@@ -348,17 +558,12 @@
 
     await ensureAgentModeOff();
 
-    const input = getPromptInput();
-    if (!input) {
-      throw new Error("Could not find the prompt input on Google Flow");
-    }
-
     const baselineImages = collectGeneratedImages();
-    await typeText(input, prompt, true);
+    const promptInput = await typePrompt(prompt);
     if (signal?.aborted) throw new Error("Stopped by user");
 
     await ensureAgentModeOff();
-    await clickGenerate();
+    await clickGenerate(promptInput);
     const newImageUrls = await waitForGenerationComplete(baselineImages, signal);
     if (!newImageUrls.length) {
       throw new Error("Generation finished but no new image was detected");
