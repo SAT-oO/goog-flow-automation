@@ -7,7 +7,6 @@ const els = {
   agentModeBar: document.getElementById("agentModeBar"),
   agentModeDot: document.getElementById("agentModeDot"),
   agentModeText: document.getElementById("agentModeText"),
-  agentAlert: document.getElementById("agentAlert"),
   versionLabel: document.getElementById("versionLabel"),
   panelShell: document.getElementById("panelShell"),
   scrollViewport: document.getElementById("scrollViewport"),
@@ -41,28 +40,19 @@ let prompts = [];
 let itemStatuses = {};
 let running = false;
 
-function setStatus(level, text) {
-  els.statusDot.className = `status-dot ${level}`;
+function setConnectionBar(pass, text) {
+  els.statusDot.className = `status-dot ${pass ? "ok" : "err"}`;
   els.statusText.textContent = text;
 }
 
-function setAgentModeBar(state, text) {
+function setAgentModeBar(pass, text) {
   els.agentModeBar.classList.remove("hidden");
+  els.agentModeDot.className = `status-dot ${pass ? "ok" : "err"}`;
+  els.agentModeText.textContent = text;
+}
 
-  if (state === "off") {
-    els.agentModeDot.className = "status-dot ok";
-    els.agentModeText.textContent = text || "Agent mode OFF — image generation ready";
-    return;
-  }
-
-  if (state === "on") {
-    els.agentModeDot.className = "status-dot warn";
-    els.agentModeText.textContent = text || "Agent mode ON — will turn off when generation starts";
-    return;
-  }
-
-  els.agentModeDot.className = "status-dot";
-  els.agentModeText.textContent = text || "Agent mode status unknown";
+function updateStartButton(connectionPass, agentPass) {
+  els.startBtn.disabled = running || !connectionPass || !agentPass || prompts.length === 0;
 }
 
 function createRetryMeter(item) {
@@ -245,35 +235,30 @@ async function checkConnection() {
   const data = response?.data || {};
 
   if (!data.connected) {
-    setStatus("err", "Google Flow not detected — open labs.google/fx/tools/flow");
+    setConnectionBar(false, "Google Flow not detected — open labs.google/fx/tools/flow");
     els.agentModeBar.classList.add("hidden");
-    els.agentAlert.classList.add("hidden");
-    els.startBtn.disabled = true;
+    updateStartButton(false, false);
     return;
   }
 
-  els.agentModeBar.classList.remove("hidden");
-
-  if (data.agentModeOn) {
-    setStatus("warn", "Connected — Agent mode is ON (will auto-disable on start)");
-    setAgentModeBar("on");
-    els.agentAlert.classList.remove("hidden");
-    els.startBtn.disabled = running || prompts.length === 0;
-    return;
+  const connectionPass = Boolean(data.hasPromptInput);
+  if (connectionPass) {
+    setConnectionBar(true, "Connected to Google Flow — ready");
+  } else {
+    setConnectionBar(
+      false,
+      "Open a Flow project with the prompt box visible"
+    );
   }
 
-  setAgentModeBar("off");
-
-  if (!data.hasPromptInput) {
-    setStatus("warn", "Connected — open a Flow project with the prompt box visible");
-    els.agentAlert.classList.add("hidden");
-    els.startBtn.disabled = running || prompts.length === 0;
-    return;
+  const agentPass = !data.agentModeOn;
+  if (agentPass) {
+    setAgentModeBar(true, "Agent mode OFF");
+  } else {
+    setAgentModeBar(false, "Agent mode ON — turn off Agent in Google Flow");
   }
 
-  setStatus("ok", "Connected to Google Flow — ready");
-  els.agentAlert.classList.add("hidden");
-  els.startBtn.disabled = running || prompts.length === 0;
+  updateStartButton(connectionPass, agentPass);
 }
 
 function updateProgress(currentIndex, total, label) {
@@ -304,11 +289,10 @@ async function startGeneration() {
 
   if (!response?.success) {
     running = false;
-    els.startBtn.disabled = false;
     els.stopBtn.disabled = true;
     updateClearButtonState();
     updateProgress(0, prompts.length, response?.error || "Failed to start");
-    setStatus("err", response?.error || "Failed to start");
+    checkConnection();
   } else {
     updateProgress(0, prompts.length, "Starting…");
   }
@@ -340,6 +324,7 @@ els.fileInput.addEventListener("change", async (event) => {
   const text = await file.text();
   els.promptInput.value = text;
   refreshPromptsFromInput();
+  checkConnection();
   event.target.value = "";
 });
 
@@ -380,18 +365,14 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (data.running === false) {
     running = false;
-    els.startBtn.disabled = prompts.length === 0;
     els.stopBtn.disabled = true;
     updateClearButtonState();
 
     if (data.error) {
-      setStatus("err", data.error);
       updateProgress(data.currentIndex || 0, prompts.length, data.error);
     } else if (data.stopped) {
-      setStatus("warn", "Stopped by user");
       updateProgress(data.currentIndex || 0, prompts.length, "Stopped");
     } else if (data.finished) {
-      setStatus("ok", "All prompts completed");
       updateProgress(prompts.length - 1, prompts.length, "All done");
     }
     checkConnection();
