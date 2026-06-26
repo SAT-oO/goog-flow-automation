@@ -42,7 +42,7 @@
         <p class="hint">One prompt per line, or separate paragraphs with a blank line.</p>
         <textarea
           id="promptInput"
-          rows="12"
+          rows="16"
           placeholder="A serene mountain lake at sunrise&#10;&#10;A futuristic city skyline at night&#10;&#10;A cozy coffee shop interior"
         ></textarea>
         <div class="row">
@@ -51,6 +51,7 @@
             <input type="file" id="fileInput" accept=".txt,text/plain" hidden />
           </label>
           <button type="button" class="ghost" id="parseBtn">Refresh preview</button>
+          <button type="button" class="ghost danger-ghost" id="clearBtn" disabled>Clear all</button>
         </div>
       </section>
 

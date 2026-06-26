@@ -17,6 +17,7 @@ const els = {
   promptInput: document.getElementById("promptInput"),
   fileInput: document.getElementById("fileInput"),
   parseBtn: document.getElementById("parseBtn"),
+  clearBtn: document.getElementById("clearBtn"),
   folderInput: document.getElementById("folderInput"),
   previewSection: document.getElementById("previewSection"),
   previewStatus: document.getElementById("previewStatus"),
@@ -195,10 +196,42 @@ function showPreviewRefreshFeedback() {
   }, 2200);
 }
 
+function updateClearButtonState() {
+  if (!els.clearBtn) return;
+  const hasText = Boolean(els.promptInput.value.trim());
+  els.clearBtn.disabled = running || !hasText;
+}
+
+function showPromptsClearedFeedback() {
+  els.previewSection.classList.remove("preview-flash");
+  void els.previewSection.offsetWidth;
+  els.previewSection.classList.add("preview-flash");
+  els.previewStatus.textContent = "All prompts cleared.";
+  els.previewStatus.classList.remove("hidden");
+
+  if (previewFeedbackTimer) clearTimeout(previewFeedbackTimer);
+  previewFeedbackTimer = setTimeout(() => {
+    els.previewSection.classList.remove("preview-flash");
+    els.previewStatus.classList.add("hidden");
+    previewFeedbackTimer = null;
+  }, 1800);
+}
+
+function clearPrompts() {
+  if (running || !els.promptInput.value.trim()) return;
+
+  els.promptInput.value = "";
+  refreshPromptsFromInput();
+  showPromptsClearedFeedback();
+  checkConnection();
+  els.promptInput.focus();
+}
+
 function refreshPromptsFromInput() {
   prompts = parsePrompts(els.promptInput.value);
   itemStatuses = {};
   renderQueue();
+  updateClearButtonState();
   chrome.storage.local.set({
     savedPromptText: els.promptInput.value,
     savedFolder: els.folderInput.value,
@@ -258,6 +291,7 @@ async function startGeneration() {
   running = true;
   els.startBtn.disabled = true;
   els.stopBtn.disabled = false;
+  updateClearButtonState();
   itemStatuses = {};
   renderQueue();
 
@@ -270,6 +304,7 @@ async function startGeneration() {
     running = false;
     els.startBtn.disabled = false;
     els.stopBtn.disabled = true;
+    updateClearButtonState();
     updateProgress(0, prompts.length, response?.error || "Failed to start");
     setStatus("err", response?.error || "Failed to start");
   } else {
@@ -291,6 +326,7 @@ els.parseBtn.addEventListener("click", () => {
   refreshPromptsFromInput();
   showPreviewRefreshFeedback();
 });
+els.clearBtn.addEventListener("click", clearPrompts);
 els.promptInput.addEventListener("input", () => {
   refreshPromptsFromInput();
   checkConnection();
@@ -344,6 +380,7 @@ chrome.runtime.onMessage.addListener((message) => {
     running = false;
     els.startBtn.disabled = prompts.length === 0;
     els.stopBtn.disabled = true;
+    updateClearButtonState();
 
     if (data.error) {
       setStatus("err", data.error);
@@ -385,9 +422,12 @@ chrome.runtime.sendMessage({ type: "GET_QUEUE_STATE" }).then((response) => {
     running = true;
     els.startBtn.disabled = true;
     els.stopBtn.disabled = false;
+    updateClearButtonState();
     els.progressSection.classList.remove("hidden");
   }
 });
+
+updateClearButtonState();
 
 const manifest = chrome.runtime.getManifest();
 if (manifest?.version) {

@@ -1,5 +1,8 @@
 :root {
   color-scheme: dark;
+  --panel-width: 720px;
+  --prompt-min-height: 320px;
+  --queue-max-height: 520px;
   --bg: #0b0d14;
   --surface: #141824;
   --surface-2: #1c2233;
@@ -20,8 +23,8 @@
 }
 
 html {
-  min-width: 560px;
-  width: 560px;
+  min-width: var(--panel-width);
+  width: var(--panel-width);
   height: 100%;
 }
 
@@ -30,8 +33,9 @@ body {
   background: linear-gradient(180deg, #0b0d14 0%, #10131d 100%);
   color: var(--text);
   height: 100%;
+  min-height: 100vh;
   overflow: hidden;
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .panel-shell {
@@ -81,11 +85,11 @@ body {
 }
 
 .app {
-  padding: 20px;
-  padding-right: 16px;
+  padding: 24px;
+  padding-right: 18px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
   min-height: min-content;
 }
 
@@ -264,7 +268,7 @@ input[type="text"] {
 }
 
 textarea {
-  min-height: 220px;
+  min-height: var(--prompt-min-height);
 }
 
 textarea:focus,
@@ -275,6 +279,7 @@ input:focus {
 
 .row {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 8px;
 }
@@ -305,6 +310,21 @@ input:focus {
   background: rgba(34, 197, 94, 0.12);
   border-color: rgba(34, 197, 94, 0.45);
   color: #86efac;
+}
+
+.ghost.danger-ghost {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.ghost.danger-ghost:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.55);
+}
+
+.ghost:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .preview {
@@ -359,7 +379,7 @@ input:focus {
   margin: 0;
   padding: 0;
   list-style: none;
-  max-height: 420px;
+  max-height: var(--queue-max-height);
   overflow: auto;
 }
 
