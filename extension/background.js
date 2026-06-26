@@ -188,7 +188,7 @@ async function generateWithRetry(tabId, prompt, index) {
         currentIndex: index,
         itemStatus: {
           index,
-          status: attempt > 1 ? "retrying" : "generating",
+          status: "generating",
           prompt,
           attempt,
           maxAttempts: MAX_GENERATION_ATTEMPTS,
@@ -490,6 +490,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         state.stopRequested = true;
         state.paused = false;
         state.currentIndex = 0;
+        await chrome.storage.local.set({ errorLogs: [] });
+        broadcast({ type: "ERROR_LOG_UPDATE", data: { cleared: true, total: 0 } });
         if (state.flowTabId) {
           chrome.tabs.sendMessage(state.flowTabId, { type: "STOP_GENERATION" }).catch(() => {});
         }

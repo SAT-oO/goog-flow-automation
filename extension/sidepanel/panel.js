@@ -1,4 +1,4 @@
-import { parsePrompts, sanitizeFolderName } from "../lib/parse-prompts.js";
+import { parsePrompts, sanitizeFolderName, getPromptBlockSpans } from "../lib/parse-prompts.js";
 
 const els = {
   statusBar: document.getElementById("statusBar"),
@@ -54,6 +54,43 @@ let restartPending = false;
 let currentQueueIndex = -1;
 let errorLogs = [];
 let highlightedErrorLogId = null;
+let queueItemClickTimer = null;
+
+function formatRetryWaitLabel(item) {
+  const maxAttempts = item?.maxAttempts || maxGenerationAttempts;
+  const attempt = item?.attempt || 1;
+  const nextAttempt = item?.nextAttempt ?? attempt + 1;
+
+  if (nextAttempt > maxAttempts || attempt >= maxAttempts) {
+    return `(attempt ${attempt}/${maxAttempts} failed — retrying…)`;
+  }
+
+  const delayMs = item?.retryInMs;
+  if (typeof delayMs === "number" && delayMs > 0) {
+    const seconds = Math.max(1, Math.round(delayMs / 1000));
+    return `(attempt ${attempt}/${maxAttempts} failed — retry ${nextAttempt}/${maxAttempts} in ${seconds}s)`;
+  }
+
+  return `(attempt ${attempt}/${maxAttempts} failed — retrying…)`;
+}
+
+function formatRetryProgressLabel(idx, item) {
+  const maxAttempts = item.maxAttempts || maxGenerationAttempts;
+  const attempt = item.attempt || 1;
+  const nextAttempt = item.nextAttempt ?? attempt + 1;
+
+  if (nextAttempt > maxAttempts || attempt >= maxAttempts) {
+    return `Prompt ${idx + 1} — attempt ${attempt}/${maxAttempts} failed, retrying…`;
+  }
+
+  const delayMs = item.retryInMs;
+  if (typeof delayMs === "number" && delayMs > 0) {
+    const seconds = Math.max(1, Math.round(delayMs / 1000));
+    return `Prompt ${idx + 1} — attempt ${attempt}/${maxAttempts} failed, retry ${nextAttempt}/${maxAttempts} in ${seconds}s`;
+  }
+
+  return `Prompt ${idx + 1} — attempt ${attempt}/${maxAttempts} failed, retrying…`;
+}
 
 function applyStatusBar(barEl, dotEl, textEl, state, text) {
   barEl.classList.remove("pass", "fail", "null");
@@ -96,8 +133,9 @@ function createRetryMeter(item) {
     segment.className = "retry-meter-segment";
 
     if (status === "retrying") {
+      const nextSlot = Math.min(item?.nextAttempt ?? attempt + 1, maxAttempts);
       if (i <= attempt) segment.classList.add("done");
-      else if (i === (item?.nextAttempt || attempt + 1)) segment.classList.add("waiting");
+      else if (nextSlot <= maxAttempts && i === nextSlot) segment.classList.add("waiting");
     } else if (status === "skipped") {
       segment.classList.add("failed");
     } else if (status === "error") {
@@ -117,9 +155,7 @@ function createRetryMeter(item) {
 function queueStatusLabel(status, item) {
   const maxAttempts = item?.maxAttempts || maxGenerationAttempts;
   if (status === "retrying") {
-    const next = item?.nextAttempt || (item?.attempt || 1) + 1;
-    const seconds = item?.retryInMs ? Math.round(item.retryInMs / 1000) : "?";
-    return `(attempt ${item?.attempt || 1}/${maxAttempts} failed — retry ${next}/${maxAttempts} in ${seconds}s)`;
+    return formatRetryWaitLabel(item);
   }
   if (status === "generating" && item?.attempt > 1) {
     return `(attempt ${item.attempt}/${maxAttempts})`;
@@ -167,9 +203,20 @@ function renderQueue() {
 
     if (isFailedQueueStatus(status)) {
       li.classList.add("queue-item-clickable");
-      li.title = "View error logs for this prompt";
-      li.addEventListener("click", () => navigateToErrorLogForPrompt(index));
+      li.title = "Click to view error logs · double-click to edit prompt";
+      li.addEventListener("click", () => {
+        clearTimeout(queueItemClickTimer);
+        queueItemClickTimer = setTimeout(() => navigateToErrorLogForPrompt(index), 250);
+      });
+    } else {
+      li.title = "Double-click to jump to this prompt in the text box";
     }
+
+    li.addEventListener("dblclick", (event) => {
+      event.preventDefault();
+      clearTimeout(queueItemClickTimer);
+      navigateToPromptInInput(index);
+    });
 
     const indexEl = document.createElement("span");
     indexEl.className = "queue-item-index";
@@ -376,6 +423,29 @@ function scrollToErrorLogForPrompt(promptIndex) {
       }
     }, 4000);
   });
+}
+
+function navigateToPromptInInput(promptIndex) {
+  const spans = getPromptBlockSpans(els.promptInput.value);
+  const span = spans[promptIndex];
+  if (!span) return;
+
+  switchTab("run");
+
+  const textarea = els.promptInput;
+  textarea.focus();
+  textarea.setSelectionRange(span.start, span.end);
+
+  const style = getComputedStyle(textarea);
+  const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.45;
+  const linesBefore = textarea.value.slice(0, span.start).split("\n").length - 1;
+  textarea.scrollTop = Math.max(0, linesBefore * lineHeight - textarea.clientHeight / 3);
+  textarea.scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+  textarea.classList.remove("prompt-highlight");
+  void textarea.offsetWidth;
+  textarea.classList.add("prompt-highlight");
+  setTimeout(() => textarea.classList.remove("prompt-highlight"), 2000);
 }
 
 function navigateToErrorLogForPrompt(promptIndex) {
@@ -673,10 +743,7 @@ chrome.runtime.onMessage.addListener((message) => {
       const maxAttempts = item.maxAttempts || maxGenerationAttempts;
       label = `Prompt ${idx + 1} skipped after ${item.attempt || maxAttempts}/${maxAttempts} failures — moving on`;
     } else if (item.status === "retrying") {
-      const maxAttempts = item.maxAttempts || maxGenerationAttempts;
-      const next = item.nextAttempt || (item.attempt || 1) + 1;
-      const seconds = item.retryInMs ? Math.round(item.retryInMs / 1000) : "?";
-      label = `Prompt ${idx + 1} — attempt ${item.attempt || 1}/${maxAttempts} failed, retry ${next}/${maxAttempts} in ${seconds}s`;
+      label = formatRetryProgressLabel(idx, item);
     } else if (item.status === "error") {
       const maxAttempts = item.maxAttempts || maxGenerationAttempts;
       label = `Prompt ${idx + 1} failed after ${item.attempt || maxAttempts}/${maxAttempts} attempts`;

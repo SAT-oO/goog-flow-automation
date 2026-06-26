@@ -228,6 +228,11 @@ textarea {
   min-height: var(--prompt-min-height);
 }
 
+textarea.prompt-highlight {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25);
+}
+
 textarea:focus,
 input:focus {
   outline: 2px solid rgba(99, 102, 241, 0.45);
@@ -372,6 +377,16 @@ input:focus {
   font-size: 0.9rem;
   line-height: 1.4;
   word-break: break-word;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 4px 6px;
+  margin-left: -6px;
+  margin-right: -6px;
+  transition: background 0.15s ease;
+}
+
+.queue-list li:hover {
+  background: rgba(99, 102, 241, 0.06);
 }
 
 .queue-item-index {

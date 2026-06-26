@@ -22,3 +22,33 @@ export function sanitizeFolderName(name) {
   const trimmed = (name || "flow-images").trim() || "flow-images";
   return trimmed.replace(/[\\/:*?"<>|]/g, "_").replace(/^\.+/, "_");
 }
+
+/**
+ * Character spans for each parsed prompt block in the original textarea value.
+ * Used to scroll/select the matching paragraph when a queue item is opened.
+ */
+export function getPromptBlockSpans(text) {
+  const prompts = parsePrompts(text);
+  if (!prompts.length) return [];
+
+  const raw = (text || "").replace(/\r\n/g, "\n");
+  const spans = [];
+  let searchFrom = 0;
+
+  for (const prompt of prompts) {
+    let needle = prompt;
+    let idx = raw.indexOf(needle, searchFrom);
+    if (idx === -1) {
+      needle = prompt.trim();
+      idx = raw.indexOf(needle, searchFrom);
+    }
+    if (idx === -1) {
+      spans.push(null);
+      continue;
+    }
+    spans.push({ start: idx, end: idx + needle.length });
+    searchFrom = idx + needle.length;
+  }
+
+  return spans;
+}
