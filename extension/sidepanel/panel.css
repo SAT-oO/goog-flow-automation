@@ -1,6 +1,7 @@
 :root {
   color-scheme: dark;
   --panel-width: 720px;
+  --panel-min-height: 920px;
   --prompt-min-height: 320px;
   --queue-max-height: 520px;
   --bg: #0b0d14;
@@ -23,32 +24,40 @@
 }
 
 html {
-  min-width: var(--panel-width);
   width: var(--panel-width);
-  height: 100%;
+  min-width: var(--panel-width);
+  max-width: var(--panel-width);
 }
 
 body {
   margin: 0;
+  width: var(--panel-width);
+  min-width: var(--panel-width);
+  max-width: var(--panel-width);
+  min-height: var(--panel-min-height);
   background: linear-gradient(180deg, #0b0d14 0%, #10131d 100%);
   color: var(--text);
-  height: 100%;
-  min-height: 100vh;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   font-size: 16px;
 }
 
 .panel-shell {
   display: flex;
-  height: 100vh;
-  min-height: 100vh;
+  flex-direction: row;
+  align-items: stretch;
+  width: var(--panel-width);
+  min-width: var(--panel-width);
+  min-height: var(--panel-min-height);
 }
 
 .scroll-viewport {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  overflow-y: auto;
+  width: 100%;
+  min-height: var(--panel-min-height);
   overflow-x: hidden;
+  overflow-y: auto;
   scrollbar-width: none;
 }
 
@@ -57,8 +66,10 @@ body {
 }
 
 .scroll-rail {
-  flex-shrink: 0;
+  flex: 0 0 14px;
   width: 14px;
+  min-height: var(--panel-min-height);
+  align-self: stretch;
   background: rgba(20, 24, 36, 0.95);
   border-left: 1px solid var(--border);
   position: relative;
@@ -90,7 +101,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  min-height: min-content;
+  width: 100%;
+  min-height: var(--panel-min-height);
 }
 
 .header-row {
@@ -332,6 +344,7 @@ input:focus {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px;
+  min-height: 120px;
   transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 

@@ -434,28 +434,65 @@ if (manifest?.version) {
   els.versionLabel.textContent = `v${manifest.version}`;
 }
 
-function initVerticalScrollRail() {
+function getScrollContainer() {
   const viewport = els.scrollViewport;
+  if (!viewport) return document.documentElement;
+
+  const viewportScrollable = viewport.scrollHeight > viewport.clientHeight + 1;
+  if (viewportScrollable) return viewport;
+
+  const docScrollable = document.documentElement.scrollHeight > window.innerHeight + 1;
+  if (docScrollable) return document.documentElement;
+
+  return viewport;
+}
+
+function initVerticalScrollRail() {
   const rail = els.scrollRail;
   const thumb = els.scrollThumb;
-  if (!viewport || !rail || !thumb) return;
+  if (!els.scrollViewport || !rail || !thumb) return;
 
   let dragging = false;
   let dragStartY = 0;
   let dragStartScroll = 0;
+  let activeContainer = els.scrollViewport;
+
+  function readScrollMetrics(container) {
+    if (container === document.documentElement) {
+      return {
+        scrollHeight: document.documentElement.scrollHeight,
+        clientHeight: window.innerHeight,
+        scrollTop: window.scrollY,
+      };
+    }
+
+    return {
+      scrollHeight: container.scrollHeight,
+      clientHeight: container.clientHeight,
+      scrollTop: container.scrollTop,
+    };
+  }
+
+  function setScrollTop(container, value) {
+    if (container === document.documentElement) {
+      window.scrollTo(0, value);
+      return;
+    }
+    container.scrollTop = value;
+  }
 
   function updateThumb() {
-    const { scrollHeight, clientHeight, scrollTop } = viewport;
+    activeContainer = getScrollContainer();
+    const { scrollHeight, clientHeight, scrollTop } = readScrollMetrics(activeContainer);
     const canScroll = scrollHeight > clientHeight + 1;
 
     rail.classList.toggle("hidden", !canScroll);
-
     if (!canScroll) return;
 
     const trackHeight = rail.clientHeight;
-    const thumbHeight = Math.max(40, (clientHeight / scrollHeight) * trackHeight);
-    const maxThumbTop = trackHeight - thumbHeight;
-    const scrollRatio = scrollTop / (scrollHeight - clientHeight);
+    const thumbHeight = Math.max(48, (clientHeight / scrollHeight) * trackHeight);
+    const maxThumbTop = Math.max(trackHeight - thumbHeight, 0);
+    const scrollRatio = scrollTop / Math.max(scrollHeight - clientHeight, 1);
     const thumbTop = maxThumbTop * scrollRatio;
 
     thumb.style.height = `${thumbHeight}px`;
@@ -463,41 +500,46 @@ function initVerticalScrollRail() {
   }
 
   function scrollFromThumb(clientY) {
+    const { scrollHeight, clientHeight } = readScrollMetrics(activeContainer);
     const trackRect = rail.getBoundingClientRect();
     const trackHeight = rail.clientHeight;
     const thumbHeight = thumb.offsetHeight;
-    const maxThumbTop = trackHeight - thumbHeight;
+    const maxThumbTop = Math.max(trackHeight - thumbHeight, 0);
     const relativeY = Math.min(Math.max(clientY - trackRect.top - thumbHeight / 2, 0), maxThumbTop);
     const ratio = maxThumbTop > 0 ? relativeY / maxThumbTop : 0;
-    viewport.scrollTop = ratio * (viewport.scrollHeight - viewport.clientHeight);
+    setScrollTop(activeContainer, ratio * Math.max(scrollHeight - clientHeight, 0));
   }
 
-  viewport.addEventListener("scroll", updateThumb, { passive: true });
+  els.scrollViewport.addEventListener("scroll", updateThumb, { passive: true });
+  window.addEventListener("scroll", updateThumb, { passive: true });
   window.addEventListener("resize", updateThumb);
 
   rail.addEventListener("mousedown", (event) => {
     if (event.target === thumb) return;
+    activeContainer = getScrollContainer();
     scrollFromThumb(event.clientY);
     updateThumb();
   });
 
   thumb.addEventListener("mousedown", (event) => {
+    activeContainer = getScrollContainer();
     dragging = true;
     dragStartY = event.clientY;
-    dragStartScroll = viewport.scrollTop;
+    dragStartScroll = readScrollMetrics(activeContainer).scrollTop;
     thumb.classList.add("dragging");
     event.preventDefault();
   });
 
   window.addEventListener("mousemove", (event) => {
     if (!dragging) return;
+    const { scrollHeight, clientHeight } = readScrollMetrics(activeContainer);
     const trackHeight = rail.clientHeight;
     const thumbHeight = thumb.offsetHeight;
-    const maxThumbTop = trackHeight - thumbHeight;
+    const maxThumbTop = Math.max(trackHeight - thumbHeight, 0);
     const deltaY = event.clientY - dragStartY;
-    const scrollRange = viewport.scrollHeight - viewport.clientHeight;
+    const scrollRange = Math.max(scrollHeight - clientHeight, 0);
     const scrollDelta = maxThumbTop > 0 ? (deltaY / maxThumbTop) * scrollRange : 0;
-    viewport.scrollTop = dragStartScroll + scrollDelta;
+    setScrollTop(activeContainer, dragStartScroll + scrollDelta);
   });
 
   window.addEventListener("mouseup", () => {
@@ -507,7 +549,7 @@ function initVerticalScrollRail() {
   });
 
   const resizeObserver = new ResizeObserver(updateThumb);
-  resizeObserver.observe(viewport);
+  resizeObserver.observe(els.scrollViewport);
   resizeObserver.observe(els.appContent);
   updateThumb();
 }
