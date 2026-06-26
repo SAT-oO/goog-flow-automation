@@ -160,6 +160,11 @@ body {
   flex-shrink: 0;
 }
 
+.status-dot.null {
+  background: #5b6478;
+  box-shadow: none;
+}
+
 .status-dot.ok {
   background: var(--success);
   box-shadow: 0 0 10px rgba(34, 197, 94, 0.6);
@@ -173,6 +178,10 @@ body {
 .status-dot.err {
   background: var(--danger);
   box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+}
+
+.status-bar.null {
+  color: var(--muted);
 }
 
 .alert {

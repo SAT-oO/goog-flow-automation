@@ -40,19 +40,32 @@ let prompts = [];
 let itemStatuses = {};
 let running = false;
 
-function setConnectionBar(pass, text) {
-  els.statusDot.className = `status-dot ${pass ? "ok" : "err"}`;
-  els.statusText.textContent = text;
+function applyStatusBar(barEl, dotEl, textEl, state, text) {
+  barEl.classList.remove("pass", "fail", "null");
+  if (state === "pass") barEl.classList.add("pass");
+  else if (state === "fail") barEl.classList.add("fail");
+  else barEl.classList.add("null");
+
+  dotEl.className = "status-dot";
+  if (state === "pass") dotEl.classList.add("ok");
+  else if (state === "fail") dotEl.classList.add("err");
+  else dotEl.classList.add("null");
+
+  textEl.textContent = text;
 }
 
-function setAgentModeBar(pass, text) {
+function setConnectionBar(state, text) {
+  applyStatusBar(els.statusBar, els.statusDot, els.statusText, state, text);
+}
+
+function setAgentModeBar(state, text) {
   els.agentModeBar.classList.remove("hidden");
-  els.agentModeDot.className = `status-dot ${pass ? "ok" : "err"}`;
-  els.agentModeText.textContent = text;
+  applyStatusBar(els.agentModeBar, els.agentModeDot, els.agentModeText, state, text);
 }
 
 function updateStartButton(connectionPass, agentPass) {
-  els.startBtn.disabled = running || !connectionPass || !agentPass || prompts.length === 0;
+  const ready = connectionPass === true && agentPass === true;
+  els.startBtn.disabled = running || !ready || prompts.length === 0;
 }
 
 function createRetryMeter(item) {
@@ -231,31 +244,31 @@ function refreshPromptsFromInput() {
 }
 
 async function checkConnection() {
+  setConnectionBar("null", "Checking Google Flow connection…");
+  setAgentModeBar("null", "Waiting for Google Flow connection…");
+
   const response = await chrome.runtime.sendMessage({ type: "CHECK_FLOW_TAB" });
   const data = response?.data || {};
 
   if (!data.connected) {
-    setConnectionBar(false, "Google Flow not detected — open labs.google/fx/tools/flow");
-    els.agentModeBar.classList.add("hidden");
+    setConnectionBar("fail", "Google Flow not detected — open labs.google/fx/tools/flow");
+    setAgentModeBar("null", "Connect to Google Flow to check agent mode");
     updateStartButton(false, false);
     return;
   }
 
   const connectionPass = Boolean(data.hasPromptInput);
   if (connectionPass) {
-    setConnectionBar(true, "Connected to Google Flow — ready");
+    setConnectionBar("pass", "Connected to Google Flow — ready");
   } else {
-    setConnectionBar(
-      false,
-      "Open a Flow project with the prompt box visible"
-    );
+    setConnectionBar("fail", "Open a Flow project with the prompt box visible");
   }
 
   const agentPass = !data.agentModeOn;
   if (agentPass) {
-    setAgentModeBar(true, "Agent mode OFF");
+    setAgentModeBar("pass", "Agent mode OFF");
   } else {
-    setAgentModeBar(false, "Agent mode ON — turn off Agent in Google Flow");
+    setAgentModeBar("fail", "Agent mode ON — turn off Agent in Google Flow");
   }
 
   updateStartButton(connectionPass, agentPass);
