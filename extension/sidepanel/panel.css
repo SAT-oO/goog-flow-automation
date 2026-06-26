@@ -2,8 +2,7 @@
   color-scheme: dark;
   --panel-width: 720px;
   --panel-min-height: 920px;
-  --prompt-min-height: 120px;
-  --queue-min-height: 80px;
+  --prompt-box-height: calc(8 * 1.45 * 0.95rem + 26px);
   --bg: #0b0d14;
   --surface: #141824;
   --surface-2: #1c2233;
@@ -225,7 +224,8 @@ input[type="text"] {
 }
 
 textarea {
-  min-height: var(--prompt-min-height);
+  min-height: var(--prompt-box-height);
+  height: var(--prompt-box-height);
 }
 
 textarea.prompt-highlight {
@@ -365,7 +365,8 @@ input:focus {
   margin: 0;
   padding: 0;
   list-style: none;
-  min-height: var(--queue-min-height);
+  min-height: var(--prompt-box-height);
+  height: var(--prompt-box-height);
   resize: vertical;
   overflow: auto;
 }
