@@ -82,11 +82,21 @@ A misty forest with sunbeams
 ## Project layout
 
 ```
-extension/           # Web extension source (MV3)
+extension/
   manifest.json
   background.js
-  content/flow.js    # Google Flow DOM automation
-  sidepanel/         # UI
+  content/
+    flow.js                 # message bridge entry point
+    lib/
+      dom.js                # Shadow DOM traversal utilities
+      targeting.js          # prompt + submit button discovery
+      input-sync.js         # reactive state synchronization
+      submitter.js          # native .click() + Enter fallback
+      ui-idle.js            # MutationObserver idle watcher
+      lifecycle.js          # per-prompt state machine
+      agent.js              # Agent mode guard
+      images.js               # image collection + download helpers
+  sidepanel/                # UI
   lib/parse-prompts.js
 scripts/build-xcode.sh
 ```

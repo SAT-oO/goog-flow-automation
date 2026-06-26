@@ -3,6 +3,19 @@
  * Orchestrates sequential prompt processing and downloads.
  */
 
+/** Content script modules — load order matters (shared FlowAutomator namespace). */
+const CONTENT_SCRIPT_FILES = [
+  "content/lib/dom.js",
+  "content/lib/targeting.js",
+  "content/lib/input-sync.js",
+  "content/lib/submitter.js",
+  "content/lib/ui-idle.js",
+  "content/lib/agent.js",
+  "content/lib/images.js",
+  "content/lib/lifecycle.js",
+  "content/flow.js",
+];
+
 const FLOW_URL_PATTERNS = [
   "https://labs.google/fx/tools/flow*",
   "https://labs.google/flow*",
@@ -72,7 +85,7 @@ async function ensureContentScript(tabId) {
 
   await chrome.scripting.executeScript({
     target: { tabId },
-    files: ["content/flow.js"],
+    files: CONTENT_SCRIPT_FILES,
   });
   await sleep(500);
 }
@@ -305,6 +318,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       case "STOP_QUEUE": {
         state.stopRequested = true;
+        if (state.flowTabId) {
+          chrome.tabs.sendMessage(state.flowTabId, { type: "STOP_GENERATION" }).catch(() => {});
+        }
         updateQueueStatus({ running: false, stopped: true, currentIndex: state.currentIndex });
         return { success: true };
       }
