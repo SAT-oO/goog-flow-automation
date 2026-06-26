@@ -3,7 +3,7 @@
   --panel-width: 720px;
   --panel-min-height: 920px;
   --prompt-min-height: 120px;
-  --queue-max-height: 520px;
+  --queue-min-height: 80px;
   --bg: #0b0d14;
   --surface: #141824;
   --surface-2: #1c2233;
@@ -360,7 +360,8 @@ input:focus {
   margin: 0;
   padding: 0;
   list-style: none;
-  max-height: var(--queue-max-height);
+  min-height: var(--queue-min-height);
+  resize: vertical;
   overflow: auto;
 }
 

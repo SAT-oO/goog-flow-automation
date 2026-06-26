@@ -50,6 +50,7 @@ let prompts = [];
 let itemStatuses = {};
 let running = false;
 let paused = false;
+let restartPending = false;
 let currentQueueIndex = -1;
 let errorLogs = [];
 let highlightedErrorLogId = null;
@@ -503,6 +504,7 @@ async function startGeneration() {
 
   running = true;
   paused = false;
+  restartPending = false;
   currentQueueIndex = 0;
   els.startBtn.disabled = true;
   els.stopBtn.disabled = false;
@@ -533,14 +535,16 @@ async function restartGeneration() {
   if (!running || !paused) return;
 
   const response = await chrome.runtime.sendMessage({ type: "RESTART_QUEUE" });
-  if (!response?.success) return;
+  if (!response?.success) {
+    updateProgress(
+      currentQueueIndex >= 0 ? currentQueueIndex : 0,
+      prompts.length,
+      response?.error || "Could not restart"
+    );
+    return;
+  }
 
-  paused = false;
-  currentQueueIndex = 0;
-  itemStatuses = {};
-  updatePauseButton();
-  updateProgress(0, prompts.length, "Restarting pipeline from prompt 1…");
-  renderQueue();
+  updateProgress(0, prompts.length, "Stopping current step — press Start generation when ready…");
 }
 
 async function stopGeneration() {
@@ -629,6 +633,23 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type !== "QUEUE_UPDATE") return;
   const data = message.data || {};
 
+  if (data.restartPending || data.clearItemStatuses) {
+    running = false;
+    paused = false;
+    restartPending = Boolean(data.restartPending);
+    currentQueueIndex = 0;
+    itemStatuses = {};
+    els.stopBtn.disabled = true;
+    updatePauseButton();
+    updateClearButtonState();
+    renderQueue();
+    if (data.restartPending) {
+      updateProgress(0, prompts.length, "Restart ready — press Start generation to run from prompt 1");
+      checkConnection();
+    }
+    return;
+  }
+
   if (typeof data.currentIndex === "number") {
     currentQueueIndex = data.currentIndex;
     scrollQueueToCurrent();
@@ -636,13 +657,6 @@ chrome.runtime.onMessage.addListener((message) => {
   if (typeof data.paused === "boolean") {
     paused = data.paused;
     updatePauseButton();
-  }
-
-  if (data.restarted) {
-    itemStatuses = {};
-    currentQueueIndex = 0;
-    updateProgress(0, prompts.length, "Restarting pipeline from prompt 1…");
-    renderQueue();
   }
 
   if (data.itemStatus) {
@@ -677,6 +691,7 @@ chrome.runtime.onMessage.addListener((message) => {
   if (data.running === false) {
     running = false;
     paused = false;
+    restartPending = false;
     els.stopBtn.disabled = true;
     updatePauseButton();
     updateClearButtonState();
@@ -693,6 +708,7 @@ chrome.runtime.onMessage.addListener((message) => {
     checkConnection();
   } else if (data.running === true) {
     running = true;
+    restartPending = false;
     updatePauseButton();
     renderQueue();
   }
@@ -720,7 +736,19 @@ chrome.runtime.sendMessage({ type: "GET_QUEUE_STATE" }).then((response) => {
         `Failed generations retry up to <strong>${maxGenerationAttempts}</strong> times with exponential backoff (up to <strong>${Math.round(response.data.maxRetryDelayMs / 1000)} s</strong> between attempts).`;
     }
   }
-  if (response?.data?.running) {
+  if (response?.data?.restartPending) {
+    restartPending = true;
+    running = false;
+    paused = false;
+    currentQueueIndex = 0;
+    itemStatuses = {};
+    els.stopBtn.disabled = true;
+    updatePauseButton();
+    updateClearButtonState();
+    renderQueue();
+    updateProgress(0, prompts.length, "Restart ready — press Start generation to run from prompt 1");
+    checkConnection();
+  } else if (response?.data?.running) {
     running = true;
     paused = Boolean(response.data.paused);
     currentQueueIndex = response.data.currentIndex ?? -1;
