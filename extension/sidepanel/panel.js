@@ -33,10 +33,19 @@ function renderQueue() {
   els.queueList.innerHTML = "";
   prompts.forEach((prompt, index) => {
     const li = document.createElement("li");
-    const status = itemStatuses[index]?.status;
+    const item = itemStatuses[index];
+    const status = item?.status;
     if (status) li.classList.add(status);
-    const preview = prompt.length > 120 ? `${prompt.slice(0, 120)}…` : prompt;
-    li.textContent = `${index + 1}. ${preview}`;
+    const preview = prompt.length > 140 ? `${prompt.slice(0, 140)}…` : prompt;
+    let prefix = `${index + 1}. `;
+    if (status === "retrying" && item?.attempt) {
+      prefix = `${index + 1}. (retry #${item.attempt}) `;
+    } else if (status === "generating") {
+      prefix = `${index + 1}. (generating) `;
+    } else if (status === "done") {
+      prefix = `${index + 1}. (done) `;
+    }
+    li.textContent = `${prefix}${preview}`;
     els.queueList.appendChild(li);
   });
 
@@ -68,9 +77,9 @@ async function checkConnection() {
   }
 
   if (data.agentModeOn) {
-    setStatus("warn", "Connected — Agent mode is ON");
+    setStatus("warn", "Connected — Agent mode is ON (will auto-disable on start)");
     els.agentAlert.classList.remove("hidden");
-    els.startBtn.disabled = true;
+    els.startBtn.disabled = running || prompts.length === 0;
     return;
   }
 
@@ -163,13 +172,15 @@ chrome.runtime.onMessage.addListener((message) => {
     itemStatuses[data.itemStatus.index] = data.itemStatus;
     renderQueue();
     const idx = data.itemStatus.index;
-    updateProgress(
-      idx,
-      prompts.length,
-      data.itemStatus.status === "done"
-        ? `Finished prompt ${idx + 1} of ${prompts.length}`
-        : `Generating prompt ${idx + 1} of ${prompts.length}…`
-    );
+    const item = data.itemStatus;
+    let label = `Generating prompt ${idx + 1} of ${prompts.length}…`;
+    if (item.status === "done") {
+      label = `Finished prompt ${idx + 1} of ${prompts.length}`;
+    } else if (item.status === "retrying") {
+      const seconds = item.retryInMs ? Math.round(item.retryInMs / 1000) : "?";
+      label = `Prompt ${idx + 1} failed — retrying in ${seconds}s (attempt ${item.attempt || 1})`;
+    }
+    updateProgress(idx, prompts.length, label);
   }
 
   if (data.running === false) {
@@ -200,6 +211,13 @@ chrome.storage.local.get(["savedPromptText", "savedFolder", "queueState"], (resu
 chrome.runtime.sendMessage({ type: "GET_QUEUE_STATE" }).then((response) => {
   const delay = response?.data?.interRequestDelayMs;
   if (delay) els.delayLabel.textContent = String(delay);
+  if (response?.data?.maxRetryDelayMs) {
+    const retryNote = document.querySelector(".footer p:nth-child(2)");
+    if (retryNote) {
+      retryNote.innerHTML =
+        `Failed generations retry with exponential backoff (up to <strong>${Math.round(response.data.maxRetryDelayMs / 1000)} s</strong> between attempts).`;
+    }
+  }
   if (response?.data?.running) {
     running = true;
     els.startBtn.disabled = true;

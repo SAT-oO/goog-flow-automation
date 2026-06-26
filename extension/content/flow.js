@@ -88,6 +88,15 @@
       window.location.pathname.includes("/flow");
   }
 
+  function findAgentToggleButton() {
+    return Array.from(document.querySelectorAll("button")).find((btn) => {
+      if (!isVisible(btn)) return false;
+      const text = (btn.textContent || "").trim().toLowerCase();
+      const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
+      return text === "agent" || aria === "agent" || aria.includes("agent mode");
+    }) || null;
+  }
+
   function isAgentModeOn() {
     const agentButtons = Array.from(document.querySelectorAll("button")).filter((btn) => {
       const text = (btn.textContent || "").trim().toLowerCase();
@@ -127,6 +136,28 @@
     }
 
     return false;
+  }
+
+  async function ensureAgentModeOff() {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      if (!isAgentModeOn()) {
+        return { agentModeOn: false };
+      }
+
+      const toggle = findAgentToggleButton();
+      if (!toggle) {
+        throw new Error("Agent mode is on but the Agent toggle could not be found");
+      }
+
+      await clickElement(toggle);
+      await sleep(700);
+    }
+
+    if (isAgentModeOn()) {
+      throw new Error("Could not turn Agent mode off — click Agent manually in Google Flow");
+    }
+
+    return { agentModeOn: false };
   }
 
   function getPromptInput() {
@@ -314,9 +345,8 @@
     if (!isOnFlowPage()) {
       throw new Error("Open Google Flow (labs.google/fx/tools/flow) in this tab first");
     }
-    if (isAgentModeOn()) {
-      throw new Error("Turn Agent mode OFF in Google Flow before starting automation");
-    }
+
+    await ensureAgentModeOff();
 
     const input = getPromptInput();
     if (!input) {
@@ -327,6 +357,7 @@
     await typeText(input, prompt, true);
     if (signal?.aborted) throw new Error("Stopped by user");
 
+    await ensureAgentModeOff();
     await clickGenerate();
     const newImageUrls = await waitForGenerationComplete(baselineImages, signal);
     if (!newImageUrls.length) {
@@ -348,6 +379,8 @@
           return { success: true, loaded: true };
         case "GET_STATUS":
           return { success: true, data: await getPageStatus() };
+        case "ENSURE_AGENT_OFF":
+          return { success: true, data: await ensureAgentModeOff() };
         case "GENERATE_IMAGE":
           return {
             success: true,

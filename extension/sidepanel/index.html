@@ -19,7 +19,7 @@
       </section>
 
       <section class="alert hidden" id="agentAlert">
-        Agent mode is ON. Turn it off in Google Flow before starting.
+        Agent mode is ON — it will be turned off automatically when generation starts.
       </section>
 
       <section class="field">
@@ -27,7 +27,7 @@
         <p class="hint">One prompt per line, or separate paragraphs with a blank line.</p>
         <textarea
           id="promptInput"
-          rows="8"
+          rows="12"
           placeholder="A serene mountain lake at sunrise&#10;&#10;A futuristic city skyline at night&#10;&#10;A cozy coffee shop interior"
         ></textarea>
         <div class="row">
@@ -74,7 +74,8 @@
 
       <footer class="footer">
         <p>Sequential delay: <strong id="delayLabel">2500</strong> ms between images</p>
-        <p>Open <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noreferrer">Google Flow</a> and disable Agent mode first.</p>
+        <p>Failed generations retry with exponential backoff (up to <strong>30 s</strong> between attempts).</p>
+        <p>Open <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noreferrer">Google Flow</a> in a project before starting.</p>
       </footer>
     </div>
     <script type="module" src="panel.js"></script>

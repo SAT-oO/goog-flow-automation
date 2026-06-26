@@ -19,22 +19,29 @@
   box-sizing: border-box;
 }
 
+html {
+  min-width: 560px;
+  width: 560px;
+}
+
 body {
   margin: 0;
   background: linear-gradient(180deg, #0b0d14 0%, #10131d 100%);
   color: var(--text);
-  min-height: 100vh;
+  min-height: 880px;
+  font-size: 15px;
 }
 
 .app {
-  padding: 16px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
+  min-height: 880px;
 }
 
 .header .logo {
-  font-size: 1.1rem;
+  font-size: 1.35rem;
   font-weight: 700;
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   -webkit-background-clip: text;
@@ -115,9 +122,15 @@ input[type="text"] {
   background: var(--surface);
   color: var(--text);
   border-radius: var(--radius);
-  padding: 10px 12px;
+  padding: 12px 14px;
   font: inherit;
+  font-size: 0.95rem;
+  line-height: 1.45;
   resize: vertical;
+}
+
+textarea {
+  min-height: 220px;
 }
 
 textarea:focus,
@@ -180,14 +193,14 @@ input:focus {
 .queue-list {
   margin: 0;
   padding-left: 1.2rem;
-  max-height: 220px;
+  max-height: 420px;
   overflow: auto;
 }
 
 .queue-list li {
-  margin-bottom: 8px;
-  font-size: 0.8rem;
-  line-height: 1.35;
+  margin-bottom: 10px;
+  font-size: 0.9rem;
+  line-height: 1.4;
   word-break: break-word;
 }
 
@@ -197,6 +210,10 @@ input:focus {
 
 .queue-list li.generating {
   color: #a5b4fc;
+}
+
+.queue-list li.retrying {
+  color: var(--warning);
 }
 
 .queue-list li.error {

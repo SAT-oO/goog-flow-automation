@@ -11,6 +11,10 @@ const FLOW_URL_PATTERNS = [
 /** Delay between completed generations (ms). */
 const INTER_REQUEST_DELAY_MS = 2500;
 
+/** Retry backoff: doubles each failure, capped at 30 s. */
+const INITIAL_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_DELAY_MS = 30000;
+
 const state = {
   running: false,
   stopRequested: false,
@@ -103,6 +107,72 @@ async function downloadImage(url, folder, index, mimeType = "image/png") {
   });
 }
 
+async function generateWithRetry(tabId, prompt, index) {
+  let delay = INITIAL_RETRY_DELAY_MS;
+  let attempt = 0;
+
+  while (true) {
+    if (state.stopRequested) {
+      throw new Error("Stopped by user");
+    }
+
+    try {
+      await sendToContent(tabId, { type: "ENSURE_AGENT_OFF" });
+
+      updateQueueStatus({
+        running: true,
+        currentIndex: index,
+        itemStatus: {
+          index,
+          status: attempt > 0 ? "retrying" : "generating",
+          prompt,
+          attempt,
+        },
+      });
+
+      const result = await sendToContent(tabId, {
+        type: "GENERATE_IMAGE",
+        prompt,
+      });
+
+      return result;
+    } catch (error) {
+      if (state.stopRequested) {
+        throw new Error("Stopped by user");
+      }
+
+      attempt += 1;
+      updateQueueStatus({
+        running: true,
+        currentIndex: index,
+        itemStatus: {
+          index,
+          status: "retrying",
+          prompt,
+          attempt,
+          error: error.message,
+          retryInMs: delay,
+        },
+      });
+
+      await sleep(delay);
+      delay = Math.min(delay * 2, MAX_RETRY_DELAY_MS);
+    }
+  }
+}
+
+async function downloadGeneratedImages(tabId, images, folder, index) {
+  for (const image of images) {
+    await downloadImage(image.url, folder, index, image.mimeType);
+  }
+
+  try {
+    await sendToContent(tabId, { type: "DOWNLOAD_LATEST" });
+  } catch {
+    // UI download is a best-effort fallback
+  }
+}
+
 async function processQueue() {
   if (state.running) return;
   state.running = true;
@@ -118,16 +188,17 @@ async function processQueue() {
     state.flowTabId = tab.id;
     await chrome.tabs.update(tab.id, { active: true });
 
+    await sendToContent(tab.id, { type: "ENSURE_AGENT_OFF" });
+
     const status = await sendToContent(tab.id, { type: "GET_STATUS" });
     if (!status.onFlowPage) {
       throw new Error("The active tab is not a Google Flow project page");
     }
-    if (status.agentModeOn) {
-      throw new Error("Agent mode is ON — turn it off in Google Flow before starting");
-    }
     if (!status.hasPromptInput) {
       throw new Error("Could not find the prompt box — open a Flow project first");
     }
+
+    let completedCount = 0;
 
     for (let i = state.currentIndex; i < state.prompts.length; i += 1) {
       if (state.stopRequested) break;
@@ -136,30 +207,18 @@ async function processQueue() {
       state.currentIndex = i;
       await saveState();
 
-      updateQueueStatus({
-        running: true,
-        currentIndex: i,
-        itemStatus: { index: i, status: "generating", prompt },
-      });
-
-      const result = await sendToContent(tab.id, {
-        type: "GENERATE_IMAGE",
-        prompt,
-      });
+      const result = await generateWithRetry(tab.id, prompt, i);
 
       if (state.stopRequested) break;
 
       const images = result.images || [];
-      for (const image of images) {
-        await downloadImage(image.url, state.folder, i, image.mimeType);
+      if (!images.length) {
+        throw new Error(`Prompt ${i + 1} finished without a downloadable image`);
       }
 
-      try {
-        await sendToContent(tab.id, { type: "DOWNLOAD_LATEST" });
-      } catch {
-        // UI download is a best-effort fallback
-      }
+      await downloadGeneratedImages(tab.id, images, state.folder, i);
 
+      completedCount += 1;
       updateQueueStatus({
         running: true,
         currentIndex: i,
@@ -171,7 +230,7 @@ async function processQueue() {
       }
     }
 
-    const finished = !state.stopRequested && state.currentIndex >= state.prompts.length - 1;
+    const finished = !state.stopRequested && completedCount === state.prompts.length;
     updateQueueStatus({
       running: false,
       currentIndex: state.currentIndex,
@@ -234,6 +293,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             prompts: state.prompts,
             folder: state.folder,
             interRequestDelayMs: INTER_REQUEST_DELAY_MS,
+            maxRetryDelayMs: MAX_RETRY_DELAY_MS,
+            initialRetryDelayMs: INITIAL_RETRY_DELAY_MS,
           },
         };
       case "CHECK_FLOW_TAB": {
