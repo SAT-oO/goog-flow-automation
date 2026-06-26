@@ -32,6 +32,7 @@ const MAX_GENERATION_ATTEMPTS = 3;
 
 const state = {
   running: false,
+  paused: false,
   stopRequested: false,
   currentIndex: 0,
   prompts: [],
@@ -39,8 +40,49 @@ const state = {
   flowTabId: null,
 };
 
+const MAX_ERROR_LOGS = 500;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Sleep in small chunks so pause/stop can interrupt retry delays. */
+async function interruptibleSleep(ms) {
+  const chunk = 200;
+  let remaining = ms;
+  while (remaining > 0) {
+    if (state.stopRequested) throw new Error("Stopped by user");
+    await waitIfPaused();
+    const step = Math.min(chunk, remaining);
+    await sleep(step);
+    remaining -= step;
+  }
+}
+
+async function waitIfPaused() {
+  while (state.paused && !state.stopRequested) {
+    await sleep(250);
+  }
+  if (state.stopRequested) {
+    throw new Error("Stopped by user");
+  }
+}
+
+async function appendErrorLog(entry) {
+  const logEntry = {
+    id: `${Date.now()}-${entry.index}-${entry.attempt}`,
+    timestamp: Date.now(),
+    ...entry,
+  };
+
+  const result = await chrome.storage.local.get(["errorLogs"]);
+  const logs = result.errorLogs || [];
+  logs.unshift(logEntry);
+  if (logs.length > MAX_ERROR_LOGS) logs.length = MAX_ERROR_LOGS;
+  await chrome.storage.local.set({ errorLogs: logs });
+
+  broadcast({ type: "ERROR_LOG_UPDATE", data: { log: logEntry, total: logs.length } });
+  return logEntry;
 }
 
 function broadcast(message) {
@@ -55,6 +97,7 @@ async function saveState() {
   await chrome.storage.local.set({
     queueState: {
       running: state.running,
+      paused: state.paused,
       currentIndex: state.currentIndex,
       prompts: state.prompts,
       folder: state.folder,
@@ -126,6 +169,7 @@ async function generateWithRetry(tabId, prompt, index) {
   let delay = INITIAL_RETRY_DELAY_MS;
 
   for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt += 1) {
+    await waitIfPaused();
     if (state.stopRequested) {
       throw new Error("Stopped by user");
     }
@@ -135,6 +179,7 @@ async function generateWithRetry(tabId, prompt, index) {
 
       updateQueueStatus({
         running: true,
+        paused: state.paused,
         currentIndex: index,
         itemStatus: {
           index,
@@ -156,27 +201,36 @@ async function generateWithRetry(tabId, prompt, index) {
         throw new Error("Stopped by user");
       }
 
+      await appendErrorLog({
+        index,
+        promptPreview: prompt.slice(0, 120),
+        prompt,
+        attempt,
+        maxAttempts: MAX_GENERATION_ATTEMPTS,
+        error: error.message,
+      });
+
       const isLastAttempt = attempt >= MAX_GENERATION_ATTEMPTS;
       if (isLastAttempt) {
         updateQueueStatus({
           running: true,
+          paused: state.paused,
           currentIndex: index,
           itemStatus: {
             index,
-            status: "error",
+            status: "skipped",
             prompt,
             attempt,
             maxAttempts: MAX_GENERATION_ATTEMPTS,
             error: error.message,
           },
         });
-        throw new Error(
-          `Prompt ${index + 1} failed after ${MAX_GENERATION_ATTEMPTS} attempts: ${error.message}`
-        );
+        return { skipped: true, error: error.message };
       }
 
       updateQueueStatus({
         running: true,
+        paused: state.paused,
         currentIndex: index,
         itemStatus: {
           index,
@@ -190,12 +244,12 @@ async function generateWithRetry(tabId, prompt, index) {
         },
       });
 
-      await sleep(delay);
+      await interruptibleSleep(delay);
       delay = Math.min(delay * 2, MAX_RETRY_DELAY_MS);
     }
   }
 
-  throw new Error(`Prompt ${index + 1} failed after ${MAX_GENERATION_ATTEMPTS} attempts`);
+  return { skipped: true, error: `Prompt ${index + 1} failed after ${MAX_GENERATION_ATTEMPTS} attempts` };
 }
 
 async function downloadGeneratedImages(tabId, images, folder, index) {
@@ -214,8 +268,12 @@ async function processQueue() {
   if (state.running) return;
   state.running = true;
   state.stopRequested = false;
+  state.paused = false;
   await saveState();
-  updateQueueStatus({ running: true, currentIndex: state.currentIndex });
+  updateQueueStatus({ running: true, paused: false, currentIndex: state.currentIndex });
+
+  let skippedCount = 0;
+  let successCount = 0;
 
   try {
     const tab = await findFlowTab();
@@ -235,53 +293,101 @@ async function processQueue() {
       throw new Error("Could not find the prompt box — open a Flow project first");
     }
 
-    let completedCount = 0;
-
     for (let i = state.currentIndex; i < state.prompts.length; i += 1) {
+      await waitIfPaused();
       if (state.stopRequested) break;
 
       const prompt = state.prompts[i];
       state.currentIndex = i;
       await saveState();
 
+      if (state.paused) {
+        updateQueueStatus({
+          running: true,
+          paused: true,
+          currentIndex: i,
+          itemStatus: { index: i, status: "paused", prompt, attempt: 1, maxAttempts: MAX_GENERATION_ATTEMPTS },
+        });
+        await waitIfPaused();
+      }
+
       const result = await generateWithRetry(tab.id, prompt, i);
 
       if (state.stopRequested) break;
 
+      if (result.skipped) {
+        skippedCount += 1;
+        if (i < state.prompts.length - 1 && !state.stopRequested) {
+          await interruptibleSleep(INTER_REQUEST_DELAY_MS);
+        }
+        continue;
+      }
+
       const images = result.images || [];
       if (!images.length) {
-        throw new Error(`Prompt ${i + 1} finished without a downloadable image`);
+        await appendErrorLog({
+          index: i,
+          promptPreview: prompt.slice(0, 120),
+          prompt,
+          attempt: MAX_GENERATION_ATTEMPTS,
+          maxAttempts: MAX_GENERATION_ATTEMPTS,
+          error: "Generation finished without a downloadable image",
+        });
+        updateQueueStatus({
+          running: true,
+          paused: state.paused,
+          currentIndex: i,
+          itemStatus: {
+            index: i,
+            status: "skipped",
+            prompt,
+            attempt: MAX_GENERATION_ATTEMPTS,
+            maxAttempts: MAX_GENERATION_ATTEMPTS,
+            error: "No downloadable image detected",
+          },
+        });
+        skippedCount += 1;
+        if (i < state.prompts.length - 1 && !state.stopRequested) {
+          await interruptibleSleep(INTER_REQUEST_DELAY_MS);
+        }
+        continue;
       }
 
       await downloadGeneratedImages(tab.id, images, state.folder, i);
 
-      completedCount += 1;
+      successCount += 1;
       updateQueueStatus({
         running: true,
+        paused: state.paused,
         currentIndex: i,
         itemStatus: { index: i, status: "done", prompt, imageCount: images.length },
       });
 
       if (i < state.prompts.length - 1 && !state.stopRequested) {
-        await sleep(INTER_REQUEST_DELAY_MS);
+        await interruptibleSleep(INTER_REQUEST_DELAY_MS);
       }
     }
 
-    const finished = !state.stopRequested && completedCount === state.prompts.length;
+    const processedAll = !state.stopRequested && successCount + skippedCount === state.prompts.length;
     updateQueueStatus({
       running: false,
+      paused: false,
       currentIndex: state.currentIndex,
-      finished,
+      finished: processedAll,
       stopped: state.stopRequested,
+      successCount,
+      skippedCount,
     });
   } catch (error) {
     updateQueueStatus({
       running: false,
+      paused: false,
       error: error.message,
       currentIndex: state.currentIndex,
     });
   } finally {
     state.running = false;
+    state.paused = false;
     if (!state.stopRequested) {
       state.currentIndex = 0;
     }
@@ -313,8 +419,34 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         state.folder = folder || "flow-images";
         state.currentIndex = Math.max(0, startIndex);
         state.stopRequested = false;
+        state.paused = false;
         processQueue();
         return { success: true };
+      }
+      case "PAUSE_QUEUE": {
+        if (!state.running) {
+          return { success: false, error: "Nothing is running" };
+        }
+        state.paused = true;
+        updateQueueStatus({
+          running: true,
+          paused: true,
+          currentIndex: state.currentIndex,
+          itemStatus: {
+            index: state.currentIndex,
+            status: "paused",
+            prompt: state.prompts[state.currentIndex],
+          },
+        });
+        return { success: true, data: { paused: true } };
+      }
+      case "RESUME_QUEUE": {
+        if (!state.running) {
+          return { success: false, error: "Nothing is running" };
+        }
+        state.paused = false;
+        updateQueueStatus({ running: true, paused: false, currentIndex: state.currentIndex });
+        return { success: true, data: { paused: false } };
       }
       case "STOP_QUEUE": {
         state.stopRequested = true;
@@ -329,6 +461,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           success: true,
           data: {
             running: state.running,
+            paused: state.paused,
             currentIndex: state.currentIndex,
             prompts: state.prompts,
             folder: state.folder,
@@ -338,6 +471,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             maxGenerationAttempts: MAX_GENERATION_ATTEMPTS,
           },
         };
+      case "GET_ERROR_LOGS": {
+        const result = await chrome.storage.local.get(["errorLogs"]);
+        return { success: true, data: { logs: result.errorLogs || [] } };
+      }
+      case "CLEAR_ERROR_LOGS": {
+        await chrome.storage.local.set({ errorLogs: [] });
+        broadcast({ type: "ERROR_LOG_UPDATE", data: { cleared: true, total: 0 } });
+        return { success: true };
+      }
       case "CHECK_FLOW_TAB": {
         const tab = await findFlowTab();
         if (!tab?.id) {

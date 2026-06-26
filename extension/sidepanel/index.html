@@ -28,6 +28,17 @@
         <span id="agentModeText">Waiting for Google Flow connection…</span>
       </section>
 
+      <section class="tab-bar" role="tablist" aria-label="Panel sections">
+        <button type="button" class="tab active" id="tabRun" role="tab" aria-selected="true" aria-controls="runPanel">
+          Run
+        </button>
+        <button type="button" class="tab" id="tabErrors" role="tab" aria-selected="false" aria-controls="errorPanel">
+          Error log
+          <span class="tab-badge hidden" id="errorBadge">0</span>
+        </button>
+      </section>
+
+      <div id="runPanel" class="tab-panel" role="tabpanel">
       <section class="field">
         <label for="promptInput">Prompts</label>
         <p class="hint">One prompt per line, or separate paragraphs with a blank line.</p>
@@ -70,6 +81,7 @@
 
       <section class="actions">
         <button type="button" class="primary" id="startBtn">Start generation</button>
+        <button type="button" class="secondary" id="pauseBtn" disabled>Pause</button>
         <button type="button" class="danger" id="stopBtn" disabled>Stop</button>
       </section>
 
@@ -82,9 +94,23 @@
 
       <footer class="footer">
         <p>Sequential delay: <strong id="delayLabel">2500</strong> ms between images</p>
-        <p>Failed generations retry up to <strong id="retryAttemptsLabel">3</strong> times with exponential backoff (up to <strong>30 s</strong> between attempts).</p>
+        <p>Failed prompts are retried up to <strong id="retryAttemptsLabel">3</strong> times, then skipped. Use <strong>Pause</strong> to halt between steps.</p>
         <p>Open <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noreferrer">Google Flow</a> in a project before starting.</p>
-        </footer>
+      </footer>
+      </div>
+
+      <section class="tab-panel hidden" id="errorPanel" role="tabpanel" aria-labelledby="tabErrors">
+        <div class="error-log-header">
+          <h2>Failed attempts</h2>
+          <div class="error-log-actions">
+            <span class="badge" id="errorLogCount">0 entries</span>
+            <button type="button" class="ghost danger-ghost" id="clearErrorsBtn">Clear log</button>
+          </div>
+        </div>
+        <p class="hint">Each failed generation attempt is logged here in real time.</p>
+        <ul class="error-log-list" id="errorLogList"></ul>
+        <p class="empty" id="emptyErrorLog">No errors yet.</p>
+      </section>
         </div>
       </div>
       <div class="scroll-rail hidden" id="scrollRail" aria-hidden="true">

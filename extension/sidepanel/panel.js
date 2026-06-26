@@ -24,7 +24,17 @@ const els = {
   queueCount: document.getElementById("queueCount"),
   emptyQueue: document.getElementById("emptyQueue"),
   startBtn: document.getElementById("startBtn"),
+  pauseBtn: document.getElementById("pauseBtn"),
   stopBtn: document.getElementById("stopBtn"),
+  tabRun: document.getElementById("tabRun"),
+  tabErrors: document.getElementById("tabErrors"),
+  runPanel: document.getElementById("runPanel"),
+  errorPanel: document.getElementById("errorPanel"),
+  errorBadge: document.getElementById("errorBadge"),
+  errorLogList: document.getElementById("errorLogList"),
+  errorLogCount: document.getElementById("errorLogCount"),
+  emptyErrorLog: document.getElementById("emptyErrorLog"),
+  clearErrorsBtn: document.getElementById("clearErrorsBtn"),
   progressSection: document.getElementById("progressSection"),
   progressText: document.getElementById("progressText"),
   progressFill: document.getElementById("progressFill"),
@@ -39,6 +49,9 @@ let maxGenerationAttempts = 3;
 let prompts = [];
 let itemStatuses = {};
 let running = false;
+let paused = false;
+let currentQueueIndex = -1;
+let errorLogs = [];
 
 function applyStatusBar(barEl, dotEl, textEl, state, text) {
   barEl.classList.remove("pass", "fail", "null");
@@ -83,6 +96,8 @@ function createRetryMeter(item) {
     if (status === "retrying") {
       if (i <= attempt) segment.classList.add("done");
       else if (i === (item?.nextAttempt || attempt + 1)) segment.classList.add("waiting");
+    } else if (status === "skipped") {
+      segment.classList.add("failed");
     } else if (status === "error") {
       if (i < maxAttempts) segment.classList.add("done");
       else segment.classList.add("failed");
@@ -109,10 +124,26 @@ function queueStatusLabel(status, item) {
   }
   if (status === "generating") return `(generating — attempt ${item?.attempt || 1}/${maxAttempts})`;
   if (status === "done") return "(done)";
+  if (status === "pending") return "(waiting)";
+  if (status === "paused") return "(paused)";
+  if (status === "skipped") {
+    return `(skipped after ${item?.attempt || maxAttempts}/${maxAttempts} attempts)`;
+  }
   if (status === "error") {
     return `(failed after ${item?.attempt || maxAttempts}/${maxAttempts} attempts)`;
   }
   return "";
+}
+
+function resolveItemStatus(index) {
+  const existing = itemStatuses[index];
+  if (existing?.status) return existing;
+
+  if (running && index > currentQueueIndex && currentQueueIndex >= 0) {
+    return { status: "pending", prompt: prompts[index] };
+  }
+
+  return existing;
 }
 
 function renderQueue() {
@@ -122,7 +153,7 @@ function renderQueue() {
 
   prompts.forEach((prompt, index) => {
     const li = document.createElement("li");
-    const item = itemStatuses[index];
+    const item = resolveItemStatus(index) || {};
     const status = item?.status;
     if (status) li.classList.add(status);
 
@@ -134,11 +165,11 @@ function renderQueue() {
     bodyEl.className = "queue-item-body";
 
     const statusLabel = queueStatusLabel(status, item);
-    if (statusLabel || status === "retrying" || status === "generating" || status === "error") {
+    if (statusLabel || ["retrying", "generating", "error", "skipped", "paused"].includes(status)) {
       const statusRow = document.createElement("div");
       statusRow.className = "queue-item-status-row";
 
-      if (status === "retrying" || status === "generating" || status === "error") {
+      if (["retrying", "generating", "error", "skipped"].includes(status)) {
         statusRow.appendChild(createRetryMeter(item));
       }
 
@@ -171,6 +202,95 @@ function renderQueue() {
       els.scrollViewport.dispatchEvent(new Event("scroll"));
     });
   }
+}
+
+function formatLogTime(timestamp) {
+  return new Date(timestamp).toLocaleString();
+}
+
+function updateErrorBadge() {
+  const count = errorLogs.length;
+  if (!els.errorBadge || !els.errorLogCount) return;
+
+  els.errorLogCount.textContent = `${count} entr${count === 1 ? "y" : "ies"}`;
+  if (count > 0) {
+    els.errorBadge.textContent = String(count);
+    els.errorBadge.classList.remove("hidden");
+  } else {
+    els.errorBadge.classList.add("hidden");
+  }
+}
+
+function renderErrorLogs() {
+  if (!els.errorLogList) return;
+
+  els.errorLogList.innerHTML = "";
+  errorLogs.forEach((entry) => {
+    const li = document.createElement("li");
+
+    const meta = document.createElement("div");
+    meta.className = "error-meta";
+    meta.innerHTML = `
+      <span>Prompt #${entry.index + 1}</span>
+      <span>Attempt ${entry.attempt}/${entry.maxAttempts || maxGenerationAttempts}</span>
+      <span>${formatLogTime(entry.timestamp)}</span>
+    `;
+
+    const message = document.createElement("div");
+    message.className = "error-message";
+    message.textContent = entry.error;
+
+    const prompt = document.createElement("div");
+    prompt.className = "error-prompt";
+    prompt.textContent = entry.promptPreview || entry.prompt || "";
+
+    li.append(meta, message, prompt);
+    els.errorLogList.appendChild(li);
+  });
+
+  const hasLogs = errorLogs.length > 0;
+  els.emptyErrorLog?.classList.toggle("hidden", hasLogs);
+  els.errorLogList.classList.toggle("hidden", !hasLogs);
+  updateErrorBadge();
+
+  if (els.scrollViewport) {
+    requestAnimationFrame(() => {
+      els.scrollViewport.dispatchEvent(new Event("scroll"));
+    });
+  }
+}
+
+async function loadErrorLogs() {
+  const response = await chrome.runtime.sendMessage({ type: "GET_ERROR_LOGS" });
+  errorLogs = response?.data?.logs || [];
+  renderErrorLogs();
+}
+
+function switchTab(tabName) {
+  const isRun = tabName === "run";
+  els.tabRun?.classList.toggle("active", isRun);
+  els.tabErrors?.classList.toggle("active", !isRun);
+  els.tabRun?.setAttribute("aria-selected", String(isRun));
+  els.tabErrors?.setAttribute("aria-selected", String(!isRun));
+  els.runPanel?.classList.toggle("hidden", !isRun);
+  els.errorPanel?.classList.toggle("hidden", isRun);
+
+  if (!isRun) {
+    loadErrorLogs();
+  }
+
+  if (els.scrollViewport) {
+    requestAnimationFrame(() => {
+      els.scrollViewport.dispatchEvent(new Event("scroll"));
+    });
+  }
+}
+
+function updatePauseButton() {
+  if (!els.pauseBtn) return;
+  els.pauseBtn.disabled = !running;
+  els.pauseBtn.textContent = paused ? "Resume" : "Pause";
+  els.pauseBtn.classList.toggle("is-resume", paused);
 }
 
 function showPreviewRefreshFeedback() {
@@ -289,8 +409,11 @@ async function startGeneration() {
   els.folderInput.value = folder;
 
   running = true;
+  paused = false;
+  currentQueueIndex = 0;
   els.startBtn.disabled = true;
   els.stopBtn.disabled = false;
+  updatePauseButton();
   updateClearButtonState();
   itemStatuses = {};
   renderQueue();
@@ -302,7 +425,9 @@ async function startGeneration() {
 
   if (!response?.success) {
     running = false;
+    paused = false;
     els.stopBtn.disabled = true;
+    updatePauseButton();
     updateClearButtonState();
     updateProgress(0, prompts.length, response?.error || "Failed to start");
     checkConnection();
@@ -314,11 +439,39 @@ async function startGeneration() {
 async function stopGeneration() {
   await chrome.runtime.sendMessage({ type: "STOP_QUEUE" });
   els.stopBtn.disabled = true;
+  paused = false;
+  updatePauseButton();
   updateProgress(
-    Object.keys(itemStatuses).length,
+    currentQueueIndex >= 0 ? currentQueueIndex : 0,
     prompts.length,
     "Stopping after current step…"
   );
+}
+
+async function togglePause() {
+  if (!running) return;
+
+  if (paused) {
+    const response = await chrome.runtime.sendMessage({ type: "RESUME_QUEUE" });
+    if (response?.success) {
+      paused = false;
+      updatePauseButton();
+      updateProgress(currentQueueIndex, prompts.length, "Resumed — continuing pipeline…");
+    }
+  } else {
+    const response = await chrome.runtime.sendMessage({ type: "PAUSE_QUEUE" });
+    if (response?.success) {
+      paused = true;
+      updatePauseButton();
+      updateProgress(currentQueueIndex, prompts.length, "Paused — press Resume to continue");
+    }
+  }
+}
+
+async function clearErrorLogs() {
+  await chrome.runtime.sendMessage({ type: "CLEAR_ERROR_LOGS" });
+  errorLogs = [];
+  renderErrorLogs();
 }
 
 els.parseBtn.addEventListener("click", () => {
@@ -347,11 +500,34 @@ els.folderInput.addEventListener("change", () => {
 });
 
 els.startBtn.addEventListener("click", startGeneration);
+els.pauseBtn?.addEventListener("click", togglePause);
 els.stopBtn.addEventListener("click", stopGeneration);
+els.tabRun?.addEventListener("click", () => switchTab("run"));
+els.tabErrors?.addEventListener("click", () => switchTab("errors"));
+els.clearErrorsBtn?.addEventListener("click", clearErrorLogs);
 
 chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === "ERROR_LOG_UPDATE") {
+    if (message.data?.cleared) {
+      errorLogs = [];
+    } else if (message.data?.log) {
+      errorLogs.unshift(message.data.log);
+      if (errorLogs.length > 500) errorLogs.length = 500;
+    }
+    renderErrorLogs();
+    return;
+  }
+
   if (message.type !== "QUEUE_UPDATE") return;
   const data = message.data || {};
+
+  if (typeof data.currentIndex === "number") {
+    currentQueueIndex = data.currentIndex;
+  }
+  if (typeof data.paused === "boolean") {
+    paused = data.paused;
+    updatePauseButton();
+  }
 
   if (data.itemStatus) {
     itemStatuses[data.itemStatus.index] = data.itemStatus;
@@ -359,8 +535,13 @@ chrome.runtime.onMessage.addListener((message) => {
     const idx = data.itemStatus.index;
     const item = data.itemStatus;
     let label = `Generating prompt ${idx + 1} of ${prompts.length}…`;
-    if (item.status === "done") {
+    if (paused) {
+      label = `Paused at prompt ${idx + 1} of ${prompts.length}`;
+    } else if (item.status === "done") {
       label = `Finished prompt ${idx + 1} of ${prompts.length}`;
+    } else if (item.status === "skipped") {
+      const maxAttempts = item.maxAttempts || maxGenerationAttempts;
+      label = `Prompt ${idx + 1} skipped after ${item.attempt || maxAttempts}/${maxAttempts} failures — moving on`;
     } else if (item.status === "retrying") {
       const maxAttempts = item.maxAttempts || maxGenerationAttempts;
       const next = item.nextAttempt || (item.attempt || 1) + 1;
@@ -378,17 +559,25 @@ chrome.runtime.onMessage.addListener((message) => {
 
   if (data.running === false) {
     running = false;
+    paused = false;
     els.stopBtn.disabled = true;
+    updatePauseButton();
     updateClearButtonState();
+    renderQueue();
 
     if (data.error) {
       updateProgress(data.currentIndex || 0, prompts.length, data.error);
     } else if (data.stopped) {
       updateProgress(data.currentIndex || 0, prompts.length, "Stopped");
     } else if (data.finished) {
-      updateProgress(prompts.length - 1, prompts.length, "All done");
+      const skippedNote = data.skippedCount ? ` (${data.skippedCount} skipped)` : "";
+      updateProgress(prompts.length - 1, prompts.length, `All done${skippedNote}`);
     }
     checkConnection();
+  } else if (data.running === true) {
+    running = true;
+    updatePauseButton();
+    renderQueue();
   }
 });
 
@@ -416,12 +605,17 @@ chrome.runtime.sendMessage({ type: "GET_QUEUE_STATE" }).then((response) => {
   }
   if (response?.data?.running) {
     running = true;
+    paused = Boolean(response.data.paused);
+    currentQueueIndex = response.data.currentIndex ?? -1;
     els.startBtn.disabled = true;
     els.stopBtn.disabled = false;
+    updatePauseButton();
     updateClearButtonState();
     els.progressSection.classList.remove("hidden");
   }
 });
+
+loadErrorLogs();
 
 updateClearButtonState();
 
