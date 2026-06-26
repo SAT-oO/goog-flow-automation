@@ -5,10 +5,13 @@ const els = {
   statusDot: document.getElementById("statusDot"),
   statusText: document.getElementById("statusText"),
   agentAlert: document.getElementById("agentAlert"),
+  versionLabel: document.getElementById("versionLabel"),
   promptInput: document.getElementById("promptInput"),
   fileInput: document.getElementById("fileInput"),
   parseBtn: document.getElementById("parseBtn"),
   folderInput: document.getElementById("folderInput"),
+  previewSection: document.getElementById("previewSection"),
+  previewStatus: document.getElementById("previewStatus"),
   queueList: document.getElementById("queueList"),
   queueCount: document.getElementById("queueCount"),
   emptyQueue: document.getElementById("emptyQueue"),
@@ -20,6 +23,9 @@ const els = {
   delayLabel: document.getElementById("delayLabel"),
 };
 
+const PARSE_BTN_LABEL = "Refresh preview";
+let previewFeedbackTimer = null;
+
 let prompts = [];
 let itemStatuses = {};
 let running = false;
@@ -29,23 +35,44 @@ function setStatus(level, text) {
   els.statusText.textContent = text;
 }
 
+function queueStatusLabel(status, item) {
+  if (status === "retrying" && item?.attempt) return `(retry #${item.attempt})`;
+  if (status === "generating") return "(generating)";
+  if (status === "done") return "(done)";
+  return "";
+}
+
 function renderQueue() {
   els.queueList.innerHTML = "";
+  const indexDigits = Math.max(1, String(prompts.length || 1).length);
+  els.queueList.style.setProperty("--queue-index-width", `${indexDigits + 0.5}ch`);
+
   prompts.forEach((prompt, index) => {
     const li = document.createElement("li");
     const item = itemStatuses[index];
     const status = item?.status;
     if (status) li.classList.add(status);
-    const preview = prompt.length > 140 ? `${prompt.slice(0, 140)}…` : prompt;
-    let prefix = `${index + 1}. `;
-    if (status === "retrying" && item?.attempt) {
-      prefix = `${index + 1}. (retry #${item.attempt}) `;
-    } else if (status === "generating") {
-      prefix = `${index + 1}. (generating) `;
-    } else if (status === "done") {
-      prefix = `${index + 1}. (done) `;
+
+    const indexEl = document.createElement("span");
+    indexEl.className = "queue-item-index";
+    indexEl.textContent = String(index + 1);
+
+    const bodyEl = document.createElement("span");
+    bodyEl.className = "queue-item-body";
+
+    const statusLabel = queueStatusLabel(status, item);
+    if (statusLabel) {
+      const statusEl = document.createElement("span");
+      statusEl.className = "queue-item-status";
+      statusEl.textContent = statusLabel;
+      bodyEl.appendChild(statusEl);
+      bodyEl.append(" ");
     }
-    li.textContent = `${prefix}${preview}`;
+
+    const preview = prompt.length > 140 ? `${prompt.slice(0, 140)}…` : prompt;
+    bodyEl.append(preview);
+
+    li.append(indexEl, bodyEl);
     els.queueList.appendChild(li);
   });
 
@@ -53,6 +80,34 @@ function renderQueue() {
   els.emptyQueue.classList.toggle("hidden", hasPrompts);
   els.queueList.classList.toggle("hidden", !hasPrompts);
   els.queueCount.textContent = `${prompts.length} prompt${prompts.length === 1 ? "" : "s"}`;
+}
+
+function showPreviewRefreshFeedback() {
+  const count = prompts.length;
+  const message =
+    count === 0
+      ? "Preview refreshed — no prompts found in the text above."
+      : `Preview refreshed — ${count} prompt${count === 1 ? "" : "s"} in queue.`;
+
+  if (previewFeedbackTimer) clearTimeout(previewFeedbackTimer);
+
+  els.previewSection.classList.remove("preview-flash");
+  void els.previewSection.offsetWidth;
+  els.previewSection.classList.add("preview-flash");
+  els.queueCount.classList.add("badge-updated");
+  els.previewStatus.textContent = message;
+  els.previewStatus.classList.remove("hidden");
+  els.parseBtn.textContent = count > 0 ? `Refreshed (${count})` : "Refreshed";
+  els.parseBtn.classList.add("refreshed");
+
+  previewFeedbackTimer = setTimeout(() => {
+    els.previewSection.classList.remove("preview-flash");
+    els.queueCount.classList.remove("badge-updated");
+    els.previewStatus.classList.add("hidden");
+    els.parseBtn.textContent = PARSE_BTN_LABEL;
+    els.parseBtn.classList.remove("refreshed");
+    previewFeedbackTimer = null;
+  }, 2200);
 }
 
 function refreshPromptsFromInput() {
@@ -141,7 +196,10 @@ async function stopGeneration() {
   );
 }
 
-els.parseBtn.addEventListener("click", refreshPromptsFromInput);
+els.parseBtn.addEventListener("click", () => {
+  refreshPromptsFromInput();
+  showPreviewRefreshFeedback();
+});
 els.promptInput.addEventListener("input", () => {
   refreshPromptsFromInput();
   checkConnection();
@@ -225,6 +283,11 @@ chrome.runtime.sendMessage({ type: "GET_QUEUE_STATE" }).then((response) => {
     els.progressSection.classList.remove("hidden");
   }
 });
+
+const manifest = chrome.runtime.getManifest();
+if (manifest?.version) {
+  els.versionLabel.textContent = `v${manifest.version}`;
+}
 
 checkConnection();
 setInterval(checkConnection, 4000);
