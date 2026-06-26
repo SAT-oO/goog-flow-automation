@@ -4,8 +4,16 @@ const els = {
   statusBar: document.getElementById("statusBar"),
   statusDot: document.getElementById("statusDot"),
   statusText: document.getElementById("statusText"),
+  agentModeBar: document.getElementById("agentModeBar"),
+  agentModeFill: document.getElementById("agentModeFill"),
+  agentModeLabel: document.getElementById("agentModeLabel"),
+  agentModeDetail: document.getElementById("agentModeDetail"),
   agentAlert: document.getElementById("agentAlert"),
   versionLabel: document.getElementById("versionLabel"),
+  scrollViewport: document.getElementById("scrollViewport"),
+  scrollRail: document.getElementById("scrollRail"),
+  scrollThumb: document.getElementById("scrollThumb"),
+  appContent: document.getElementById("appContent"),
   promptInput: document.getElementById("promptInput"),
   fileInput: document.getElementById("fileInput"),
   parseBtn: document.getElementById("parseBtn"),
@@ -21,10 +29,12 @@ const els = {
   progressText: document.getElementById("progressText"),
   progressFill: document.getElementById("progressFill"),
   delayLabel: document.getElementById("delayLabel"),
+  retryAttemptsLabel: document.getElementById("retryAttemptsLabel"),
 };
 
 const PARSE_BTN_LABEL = "Refresh preview";
 let previewFeedbackTimer = null;
+let maxGenerationAttempts = 3;
 
 let prompts = [];
 let itemStatuses = {};
@@ -35,10 +45,67 @@ function setStatus(level, text) {
   els.statusText.textContent = text;
 }
 
+function setAgentModeBar(state, detail = "") {
+  els.agentModeBar.classList.remove("hidden", "agent-off", "agent-on", "agent-unknown");
+  els.agentModeBar.classList.add(`agent-${state}`);
+  els.agentModeFill.style.width = state === "on" ? "100%" : state === "off" ? "100%" : "0%";
+
+  if (state === "off") {
+    els.agentModeLabel.textContent = "Agent mode OFF";
+    els.agentModeDetail.textContent = detail || "Image generation mode is active — automation ready";
+  } else if (state === "on") {
+    els.agentModeLabel.textContent = "Agent mode ON";
+    els.agentModeDetail.textContent = detail || "Will be turned off automatically when generation starts";
+  } else {
+    els.agentModeLabel.textContent = "Agent mode";
+    els.agentModeDetail.textContent = detail || "Connect to Google Flow to check status";
+  }
+}
+
+function createRetryMeter(item) {
+  const maxAttempts = item?.maxAttempts || maxGenerationAttempts;
+  const attempt = item?.attempt || 1;
+  const status = item?.status;
+  const meter = document.createElement("div");
+  meter.className = "retry-meter";
+  meter.setAttribute("aria-label", `Attempt ${attempt} of ${maxAttempts}`);
+
+  for (let i = 1; i <= maxAttempts; i += 1) {
+    const segment = document.createElement("span");
+    segment.className = "retry-meter-segment";
+
+    if (status === "retrying") {
+      if (i <= attempt) segment.classList.add("done");
+      else if (i === (item?.nextAttempt || attempt + 1)) segment.classList.add("waiting");
+    } else if (status === "error") {
+      if (i < maxAttempts) segment.classList.add("done");
+      else segment.classList.add("failed");
+    } else if (status === "generating") {
+      if (i < attempt) segment.classList.add("done");
+      else if (i === attempt) segment.classList.add("active");
+    }
+
+    meter.appendChild(segment);
+  }
+
+  return meter;
+}
+
 function queueStatusLabel(status, item) {
-  if (status === "retrying" && item?.attempt) return `(retry #${item.attempt})`;
-  if (status === "generating") return "(generating)";
+  const maxAttempts = item?.maxAttempts || maxGenerationAttempts;
+  if (status === "retrying") {
+    const next = item?.nextAttempt || (item?.attempt || 1) + 1;
+    const seconds = item?.retryInMs ? Math.round(item.retryInMs / 1000) : "?";
+    return `(attempt ${item?.attempt || 1}/${maxAttempts} failed — retry ${next}/${maxAttempts} in ${seconds}s)`;
+  }
+  if (status === "generating" && item?.attempt > 1) {
+    return `(attempt ${item.attempt}/${maxAttempts})`;
+  }
+  if (status === "generating") return `(generating — attempt ${item?.attempt || 1}/${maxAttempts})`;
   if (status === "done") return "(done)";
+  if (status === "error") {
+    return `(failed after ${item?.attempt || maxAttempts}/${maxAttempts} attempts)`;
+  }
   return "";
 }
 
@@ -61,16 +128,29 @@ function renderQueue() {
     bodyEl.className = "queue-item-body";
 
     const statusLabel = queueStatusLabel(status, item);
-    if (statusLabel) {
-      const statusEl = document.createElement("span");
-      statusEl.className = "queue-item-status";
-      statusEl.textContent = statusLabel;
-      bodyEl.appendChild(statusEl);
-      bodyEl.append(" ");
+    if (statusLabel || status === "retrying" || status === "generating" || status === "error") {
+      const statusRow = document.createElement("div");
+      statusRow.className = "queue-item-status-row";
+
+      if (status === "retrying" || status === "generating" || status === "error") {
+        statusRow.appendChild(createRetryMeter(item));
+      }
+
+      if (statusLabel) {
+        const statusEl = document.createElement("span");
+        statusEl.className = "queue-item-status";
+        statusEl.textContent = statusLabel;
+        statusRow.appendChild(statusEl);
+      }
+
+      bodyEl.appendChild(statusRow);
     }
 
     const preview = prompt.length > 140 ? `${prompt.slice(0, 140)}…` : prompt;
-    bodyEl.append(preview);
+    const previewEl = document.createElement("span");
+    previewEl.className = "queue-item-preview";
+    previewEl.textContent = preview;
+    bodyEl.appendChild(previewEl);
 
     li.append(indexEl, bodyEl);
     els.queueList.appendChild(li);
@@ -80,6 +160,11 @@ function renderQueue() {
   els.emptyQueue.classList.toggle("hidden", hasPrompts);
   els.queueList.classList.toggle("hidden", !hasPrompts);
   els.queueCount.textContent = `${prompts.length} prompt${prompts.length === 1 ? "" : "s"}`;
+  if (els.scrollViewport) {
+    requestAnimationFrame(() => {
+      els.scrollViewport.dispatchEvent(new Event("scroll"));
+    });
+  }
 }
 
 function showPreviewRefreshFeedback() {
@@ -126,17 +211,23 @@ async function checkConnection() {
 
   if (!data.connected) {
     setStatus("err", "Google Flow not detected — open labs.google/fx/tools/flow");
+    els.agentModeBar.classList.add("hidden");
     els.agentAlert.classList.add("hidden");
     els.startBtn.disabled = true;
     return;
   }
 
+  els.agentModeBar.classList.remove("hidden");
+
   if (data.agentModeOn) {
     setStatus("warn", "Connected — Agent mode is ON (will auto-disable on start)");
+    setAgentModeBar("on");
     els.agentAlert.classList.remove("hidden");
     els.startBtn.disabled = running || prompts.length === 0;
     return;
   }
+
+  setAgentModeBar("off");
 
   if (!data.hasPromptInput) {
     setStatus("warn", "Connected — open a Flow project with the prompt box visible");
@@ -235,8 +326,16 @@ chrome.runtime.onMessage.addListener((message) => {
     if (item.status === "done") {
       label = `Finished prompt ${idx + 1} of ${prompts.length}`;
     } else if (item.status === "retrying") {
+      const maxAttempts = item.maxAttempts || maxGenerationAttempts;
+      const next = item.nextAttempt || (item.attempt || 1) + 1;
       const seconds = item.retryInMs ? Math.round(item.retryInMs / 1000) : "?";
-      label = `Prompt ${idx + 1} failed — retrying in ${seconds}s (attempt ${item.attempt || 1})`;
+      label = `Prompt ${idx + 1} — attempt ${item.attempt || 1}/${maxAttempts} failed, retry ${next}/${maxAttempts} in ${seconds}s`;
+    } else if (item.status === "error") {
+      const maxAttempts = item.maxAttempts || maxGenerationAttempts;
+      label = `Prompt ${idx + 1} failed after ${item.attempt || maxAttempts}/${maxAttempts} attempts`;
+    } else if (item.status === "generating") {
+      const maxAttempts = item.maxAttempts || maxGenerationAttempts;
+      label = `Generating prompt ${idx + 1} of ${prompts.length} (attempt ${item.attempt || 1}/${maxAttempts})…`;
     }
     updateProgress(idx, prompts.length, label);
   }
@@ -269,11 +368,17 @@ chrome.storage.local.get(["savedPromptText", "savedFolder", "queueState"], (resu
 chrome.runtime.sendMessage({ type: "GET_QUEUE_STATE" }).then((response) => {
   const delay = response?.data?.interRequestDelayMs;
   if (delay) els.delayLabel.textContent = String(delay);
+  if (response?.data?.maxGenerationAttempts) {
+    maxGenerationAttempts = response.data.maxGenerationAttempts;
+    if (els.retryAttemptsLabel) {
+      els.retryAttemptsLabel.textContent = String(maxGenerationAttempts);
+    }
+  }
   if (response?.data?.maxRetryDelayMs) {
     const retryNote = document.querySelector(".footer p:nth-child(2)");
     if (retryNote) {
       retryNote.innerHTML =
-        `Failed generations retry with exponential backoff (up to <strong>${Math.round(response.data.maxRetryDelayMs / 1000)} s</strong> between attempts).`;
+        `Failed generations retry up to <strong>${maxGenerationAttempts}</strong> times with exponential backoff (up to <strong>${Math.round(response.data.maxRetryDelayMs / 1000)} s</strong> between attempts).`;
     }
   }
   if (response?.data?.running) {
@@ -288,6 +393,86 @@ const manifest = chrome.runtime.getManifest();
 if (manifest?.version) {
   els.versionLabel.textContent = `v${manifest.version}`;
 }
+
+function initVerticalScrollRail() {
+  const viewport = els.scrollViewport;
+  const rail = els.scrollRail;
+  const thumb = els.scrollThumb;
+  if (!viewport || !rail || !thumb) return;
+
+  let dragging = false;
+  let dragStartY = 0;
+  let dragStartScroll = 0;
+
+  function updateThumb() {
+    const { scrollHeight, clientHeight, scrollTop } = viewport;
+    const canScroll = scrollHeight > clientHeight + 1;
+
+    rail.classList.toggle("hidden", !canScroll);
+
+    if (!canScroll) return;
+
+    const trackHeight = rail.clientHeight;
+    const thumbHeight = Math.max(40, (clientHeight / scrollHeight) * trackHeight);
+    const maxThumbTop = trackHeight - thumbHeight;
+    const scrollRatio = scrollTop / (scrollHeight - clientHeight);
+    const thumbTop = maxThumbTop * scrollRatio;
+
+    thumb.style.height = `${thumbHeight}px`;
+    thumb.style.transform = `translateY(${thumbTop}px)`;
+  }
+
+  function scrollFromThumb(clientY) {
+    const trackRect = rail.getBoundingClientRect();
+    const trackHeight = rail.clientHeight;
+    const thumbHeight = thumb.offsetHeight;
+    const maxThumbTop = trackHeight - thumbHeight;
+    const relativeY = Math.min(Math.max(clientY - trackRect.top - thumbHeight / 2, 0), maxThumbTop);
+    const ratio = maxThumbTop > 0 ? relativeY / maxThumbTop : 0;
+    viewport.scrollTop = ratio * (viewport.scrollHeight - viewport.clientHeight);
+  }
+
+  viewport.addEventListener("scroll", updateThumb, { passive: true });
+  window.addEventListener("resize", updateThumb);
+
+  rail.addEventListener("mousedown", (event) => {
+    if (event.target === thumb) return;
+    scrollFromThumb(event.clientY);
+    updateThumb();
+  });
+
+  thumb.addEventListener("mousedown", (event) => {
+    dragging = true;
+    dragStartY = event.clientY;
+    dragStartScroll = viewport.scrollTop;
+    thumb.classList.add("dragging");
+    event.preventDefault();
+  });
+
+  window.addEventListener("mousemove", (event) => {
+    if (!dragging) return;
+    const trackHeight = rail.clientHeight;
+    const thumbHeight = thumb.offsetHeight;
+    const maxThumbTop = trackHeight - thumbHeight;
+    const deltaY = event.clientY - dragStartY;
+    const scrollRange = viewport.scrollHeight - viewport.clientHeight;
+    const scrollDelta = maxThumbTop > 0 ? (deltaY / maxThumbTop) * scrollRange : 0;
+    viewport.scrollTop = dragStartScroll + scrollDelta;
+  });
+
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    thumb.classList.remove("dragging");
+  });
+
+  const resizeObserver = new ResizeObserver(updateThumb);
+  resizeObserver.observe(viewport);
+  resizeObserver.observe(els.appContent);
+  updateThumb();
+}
+
+initVerticalScrollRail();
 
 checkConnection();
 setInterval(checkConnection, 4000);

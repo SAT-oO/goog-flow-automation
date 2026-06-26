@@ -14,6 +14,8 @@ const INTER_REQUEST_DELAY_MS = 2500;
 /** Retry backoff: doubles each failure, capped at 30 s. */
 const INITIAL_RETRY_DELAY_MS = 1000;
 const MAX_RETRY_DELAY_MS = 30000;
+/** Total generation attempts per prompt (initial try + retries). */
+const MAX_GENERATION_ATTEMPTS = 3;
 
 const state = {
   running: false,
@@ -109,9 +111,8 @@ async function downloadImage(url, folder, index, mimeType = "image/png") {
 
 async function generateWithRetry(tabId, prompt, index) {
   let delay = INITIAL_RETRY_DELAY_MS;
-  let attempt = 0;
 
-  while (true) {
+  for (let attempt = 1; attempt <= MAX_GENERATION_ATTEMPTS; attempt += 1) {
     if (state.stopRequested) {
       throw new Error("Stopped by user");
     }
@@ -124,9 +125,10 @@ async function generateWithRetry(tabId, prompt, index) {
         currentIndex: index,
         itemStatus: {
           index,
-          status: attempt > 0 ? "retrying" : "generating",
+          status: attempt > 1 ? "retrying" : "generating",
           prompt,
           attempt,
+          maxAttempts: MAX_GENERATION_ATTEMPTS,
         },
       });
 
@@ -141,7 +143,25 @@ async function generateWithRetry(tabId, prompt, index) {
         throw new Error("Stopped by user");
       }
 
-      attempt += 1;
+      const isLastAttempt = attempt >= MAX_GENERATION_ATTEMPTS;
+      if (isLastAttempt) {
+        updateQueueStatus({
+          running: true,
+          currentIndex: index,
+          itemStatus: {
+            index,
+            status: "error",
+            prompt,
+            attempt,
+            maxAttempts: MAX_GENERATION_ATTEMPTS,
+            error: error.message,
+          },
+        });
+        throw new Error(
+          `Prompt ${index + 1} failed after ${MAX_GENERATION_ATTEMPTS} attempts: ${error.message}`
+        );
+      }
+
       updateQueueStatus({
         running: true,
         currentIndex: index,
@@ -150,6 +170,8 @@ async function generateWithRetry(tabId, prompt, index) {
           status: "retrying",
           prompt,
           attempt,
+          maxAttempts: MAX_GENERATION_ATTEMPTS,
+          nextAttempt: attempt + 1,
           error: error.message,
           retryInMs: delay,
         },
@@ -159,6 +181,8 @@ async function generateWithRetry(tabId, prompt, index) {
       delay = Math.min(delay * 2, MAX_RETRY_DELAY_MS);
     }
   }
+
+  throw new Error(`Prompt ${index + 1} failed after ${MAX_GENERATION_ATTEMPTS} attempts`);
 }
 
 async function downloadGeneratedImages(tabId, images, folder, index) {
@@ -295,6 +319,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             interRequestDelayMs: INTER_REQUEST_DELAY_MS,
             maxRetryDelayMs: MAX_RETRY_DELAY_MS,
             initialRetryDelayMs: INITIAL_RETRY_DELAY_MS,
+            maxGenerationAttempts: MAX_GENERATION_ATTEMPTS,
           },
         };
       case "CHECK_FLOW_TAB": {

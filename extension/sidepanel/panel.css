@@ -22,22 +22,71 @@
 html {
   min-width: 560px;
   width: 560px;
+  height: 100%;
 }
 
 body {
   margin: 0;
   background: linear-gradient(180deg, #0b0d14 0%, #10131d 100%);
   color: var(--text);
-  min-height: 880px;
+  height: 100%;
+  overflow: hidden;
   font-size: 15px;
+}
+
+.panel-shell {
+  display: flex;
+  height: 100vh;
+  min-height: 100vh;
+}
+
+.scroll-viewport {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+}
+
+.scroll-viewport::-webkit-scrollbar {
+  display: none;
+}
+
+.scroll-rail {
+  flex-shrink: 0;
+  width: 14px;
+  background: rgba(20, 24, 36, 0.95);
+  border-left: 1px solid var(--border);
+  position: relative;
+  touch-action: none;
+}
+
+.scroll-thumb {
+  position: absolute;
+  top: 0;
+  left: 3px;
+  right: 3px;
+  min-height: 48px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #6b7280, #4b5563);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+  cursor: grab;
+  transition: background 0.15s ease;
+}
+
+.scroll-thumb:hover,
+.scroll-thumb.dragging {
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  cursor: grabbing;
 }
 
 .app {
   padding: 20px;
+  padding-right: 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  min-height: 880px;
+  min-height: min-content;
 }
 
 .header-row {
@@ -105,6 +154,73 @@ body {
 .status-dot.err {
   background: var(--danger);
   box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+}
+
+.agent-mode-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.agent-mode-track {
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.agent-mode-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  transition: width 0.35s ease, background 0.35s ease;
+}
+
+.agent-mode-bar.agent-off .agent-mode-fill {
+  background: linear-gradient(90deg, #16a34a, var(--success));
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.45);
+}
+
+.agent-mode-bar.agent-on .agent-mode-fill {
+  background: linear-gradient(90deg, #d97706, var(--warning));
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.45);
+}
+
+.agent-mode-bar.agent-unknown .agent-mode-fill {
+  background: var(--muted);
+}
+
+.agent-mode-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-mode-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.agent-mode-bar.agent-off .agent-mode-label {
+  color: #86efac;
+}
+
+.agent-mode-bar.agent-on .agent-mode-label {
+  color: #fcd34d;
+}
+
+.agent-mode-bar.agent-unknown .agent-mode-label {
+  color: var(--muted);
+}
+
+.agent-mode-detail {
+  font-size: 0.74rem;
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .alert {
@@ -268,11 +384,72 @@ input:focus {
 .queue-item-body {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.queue-item-status-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .queue-item-status {
   color: var(--muted);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.queue-item-preview {
+  display: block;
+}
+
+.retry-meter {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  max-width: 180px;
+}
+
+.retry-meter-segment {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.retry-meter-segment.done {
+  background: rgba(245, 158, 11, 0.7);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.retry-meter-segment.active {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  border-color: rgba(99, 102, 241, 0.5);
+  animation: retry-pulse 1.2s ease-in-out infinite;
+}
+
+.retry-meter-segment.waiting {
+  background: var(--warning);
+  border-color: rgba(245, 158, 11, 0.5);
+  animation: retry-pulse 0.8s ease-in-out infinite;
+}
+
+.retry-meter-segment.failed {
+  background: var(--danger);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+@keyframes retry-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
 }
 
 .queue-list li.done {

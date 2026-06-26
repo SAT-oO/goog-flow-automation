@@ -7,7 +7,9 @@
     <link rel="stylesheet" href="panel.css" />
   </head>
   <body>
-    <div class="app">
+    <div class="panel-shell">
+      <div class="scroll-viewport" id="scrollViewport">
+        <div class="app" id="appContent">
       <header class="header">
         <div class="header-row">
           <div class="logo">Flow Image Automator</div>
@@ -19,6 +21,16 @@
       <section class="status-bar" id="statusBar">
         <span class="status-dot" id="statusDot"></span>
         <span id="statusText">Checking connection…</span>
+      </section>
+
+      <section class="agent-mode-bar hidden" id="agentModeBar" aria-live="polite">
+        <div class="agent-mode-track">
+          <div class="agent-mode-fill" id="agentModeFill"></div>
+        </div>
+        <div class="agent-mode-copy">
+          <span class="agent-mode-label" id="agentModeLabel">Agent mode</span>
+          <span class="agent-mode-detail" id="agentModeDetail"></span>
+        </div>
       </section>
 
       <section class="alert hidden" id="agentAlert">
@@ -78,9 +90,14 @@
 
       <footer class="footer">
         <p>Sequential delay: <strong id="delayLabel">2500</strong> ms between images</p>
-        <p>Failed generations retry with exponential backoff (up to <strong>30 s</strong> between attempts).</p>
+        <p>Failed generations retry up to <strong id="retryAttemptsLabel">3</strong> times with exponential backoff (up to <strong>30 s</strong> between attempts).</p>
         <p>Open <a href="https://labs.google/fx/tools/flow" target="_blank" rel="noreferrer">Google Flow</a> in a project before starting.</p>
-      </footer>
+        </footer>
+        </div>
+      </div>
+      <div class="scroll-rail hidden" id="scrollRail" aria-hidden="true">
+        <div class="scroll-thumb" id="scrollThumb"></div>
+      </div>
     </div>
     <script type="module" src="panel.js"></script>
   </body>
