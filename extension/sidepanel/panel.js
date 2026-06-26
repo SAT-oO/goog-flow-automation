@@ -5,11 +5,11 @@ const els = {
   statusDot: document.getElementById("statusDot"),
   statusText: document.getElementById("statusText"),
   agentModeBar: document.getElementById("agentModeBar"),
-  agentModeFill: document.getElementById("agentModeFill"),
-  agentModeLabel: document.getElementById("agentModeLabel"),
-  agentModeDetail: document.getElementById("agentModeDetail"),
+  agentModeDot: document.getElementById("agentModeDot"),
+  agentModeText: document.getElementById("agentModeText"),
   agentAlert: document.getElementById("agentAlert"),
   versionLabel: document.getElementById("versionLabel"),
+  panelShell: document.getElementById("panelShell"),
   scrollViewport: document.getElementById("scrollViewport"),
   scrollRail: document.getElementById("scrollRail"),
   scrollThumb: document.getElementById("scrollThumb"),
@@ -46,21 +46,23 @@ function setStatus(level, text) {
   els.statusText.textContent = text;
 }
 
-function setAgentModeBar(state, detail = "") {
-  els.agentModeBar.classList.remove("hidden", "agent-off", "agent-on", "agent-unknown");
-  els.agentModeBar.classList.add(`agent-${state}`);
-  els.agentModeFill.style.width = state === "on" ? "100%" : state === "off" ? "100%" : "0%";
+function setAgentModeBar(state, text) {
+  els.agentModeBar.classList.remove("hidden");
 
   if (state === "off") {
-    els.agentModeLabel.textContent = "Agent mode OFF";
-    els.agentModeDetail.textContent = detail || "Image generation mode is active — automation ready";
-  } else if (state === "on") {
-    els.agentModeLabel.textContent = "Agent mode ON";
-    els.agentModeDetail.textContent = detail || "Will be turned off automatically when generation starts";
-  } else {
-    els.agentModeLabel.textContent = "Agent mode";
-    els.agentModeDetail.textContent = detail || "Connect to Google Flow to check status";
+    els.agentModeDot.className = "status-dot ok";
+    els.agentModeText.textContent = text || "Agent mode OFF — image generation ready";
+    return;
   }
+
+  if (state === "on") {
+    els.agentModeDot.className = "status-dot warn";
+    els.agentModeText.textContent = text || "Agent mode ON — will turn off when generation starts";
+    return;
+  }
+
+  els.agentModeDot.className = "status-dot";
+  els.agentModeText.textContent = text || "Agent mode status unknown";
 }
 
 function createRetryMeter(item) {
@@ -434,62 +436,51 @@ if (manifest?.version) {
   els.versionLabel.textContent = `v${manifest.version}`;
 }
 
-function getScrollContainer() {
-  const viewport = els.scrollViewport;
-  if (!viewport) return document.documentElement;
+function syncPanelViewportHeight() {
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  if (!viewportHeight) return;
 
-  const viewportScrollable = viewport.scrollHeight > viewport.clientHeight + 1;
-  if (viewportScrollable) return viewport;
+  document.documentElement.style.height = `${viewportHeight}px`;
+  document.body.style.height = `${viewportHeight}px`;
+  if (els.panelShell) {
+    els.panelShell.style.height = `${viewportHeight}px`;
+  }
 
-  const docScrollable = document.documentElement.scrollHeight > window.innerHeight + 1;
-  if (docScrollable) return document.documentElement;
-
-  return viewport;
+  if (els.scrollViewport) {
+    els.scrollViewport.dispatchEvent(new Event("scroll"));
+  }
 }
 
 function initVerticalScrollRail() {
+  const viewport = els.scrollViewport;
   const rail = els.scrollRail;
   const thumb = els.scrollThumb;
-  if (!els.scrollViewport || !rail || !thumb) return;
+  if (!viewport || !rail || !thumb) return;
 
   let dragging = false;
   let dragStartY = 0;
   let dragStartScroll = 0;
-  let activeContainer = els.scrollViewport;
 
-  function readScrollMetrics(container) {
-    if (container === document.documentElement) {
-      return {
-        scrollHeight: document.documentElement.scrollHeight,
-        clientHeight: window.innerHeight,
-        scrollTop: window.scrollY,
-      };
-    }
-
+  function readMetrics() {
     return {
-      scrollHeight: container.scrollHeight,
-      clientHeight: container.clientHeight,
-      scrollTop: container.scrollTop,
+      scrollHeight: viewport.scrollHeight,
+      clientHeight: viewport.clientHeight,
+      scrollTop: viewport.scrollTop,
     };
   }
 
-  function setScrollTop(container, value) {
-    if (container === document.documentElement) {
-      window.scrollTo(0, value);
-      return;
-    }
-    container.scrollTop = value;
-  }
-
   function updateThumb() {
-    activeContainer = getScrollContainer();
-    const { scrollHeight, clientHeight, scrollTop } = readScrollMetrics(activeContainer);
+    const { scrollHeight, clientHeight, scrollTop } = readMetrics();
     const canScroll = scrollHeight > clientHeight + 1;
 
     rail.classList.toggle("hidden", !canScroll);
-    if (!canScroll) return;
+    if (!canScroll) {
+      thumb.style.height = "0px";
+      thumb.style.transform = "translateY(0px)";
+      return;
+    }
 
-    const trackHeight = rail.clientHeight;
+    const trackHeight = viewport.clientHeight;
     const thumbHeight = Math.max(48, (clientHeight / scrollHeight) * trackHeight);
     const maxThumbTop = Math.max(trackHeight - thumbHeight, 0);
     const scrollRatio = scrollTop / Math.max(scrollHeight - clientHeight, 1);
@@ -499,62 +490,72 @@ function initVerticalScrollRail() {
     thumb.style.transform = `translateY(${thumbTop}px)`;
   }
 
-  function scrollFromThumb(clientY) {
-    const { scrollHeight, clientHeight } = readScrollMetrics(activeContainer);
+  function scrollToClientY(clientY) {
+    const { scrollHeight, clientHeight } = readMetrics();
     const trackRect = rail.getBoundingClientRect();
-    const trackHeight = rail.clientHeight;
+    const trackHeight = viewport.clientHeight;
     const thumbHeight = thumb.offsetHeight;
     const maxThumbTop = Math.max(trackHeight - thumbHeight, 0);
     const relativeY = Math.min(Math.max(clientY - trackRect.top - thumbHeight / 2, 0), maxThumbTop);
     const ratio = maxThumbTop > 0 ? relativeY / maxThumbTop : 0;
-    setScrollTop(activeContainer, ratio * Math.max(scrollHeight - clientHeight, 0));
+    viewport.scrollTop = ratio * Math.max(scrollHeight - clientHeight, 0);
   }
 
-  els.scrollViewport.addEventListener("scroll", updateThumb, { passive: true });
-  window.addEventListener("scroll", updateThumb, { passive: true });
+  viewport.addEventListener("scroll", updateThumb, { passive: true });
   window.addEventListener("resize", updateThumb);
 
-  rail.addEventListener("mousedown", (event) => {
+  rail.addEventListener("pointerdown", (event) => {
     if (event.target === thumb) return;
-    activeContainer = getScrollContainer();
-    scrollFromThumb(event.clientY);
+    scrollToClientY(event.clientY);
     updateThumb();
-  });
-
-  thumb.addEventListener("mousedown", (event) => {
-    activeContainer = getScrollContainer();
-    dragging = true;
-    dragStartY = event.clientY;
-    dragStartScroll = readScrollMetrics(activeContainer).scrollTop;
-    thumb.classList.add("dragging");
     event.preventDefault();
   });
 
-  window.addEventListener("mousemove", (event) => {
+  thumb.addEventListener("pointerdown", (event) => {
+    dragging = true;
+    dragStartY = event.clientY;
+    dragStartScroll = viewport.scrollTop;
+    thumb.classList.add("dragging");
+    thumb.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  });
+
+  thumb.addEventListener("pointermove", (event) => {
     if (!dragging) return;
-    const { scrollHeight, clientHeight } = readScrollMetrics(activeContainer);
-    const trackHeight = rail.clientHeight;
+    const { scrollHeight, clientHeight } = readMetrics();
+    const trackHeight = viewport.clientHeight;
     const thumbHeight = thumb.offsetHeight;
     const maxThumbTop = Math.max(trackHeight - thumbHeight, 0);
     const deltaY = event.clientY - dragStartY;
     const scrollRange = Math.max(scrollHeight - clientHeight, 0);
     const scrollDelta = maxThumbTop > 0 ? (deltaY / maxThumbTop) * scrollRange : 0;
-    setScrollTop(activeContainer, dragStartScroll + scrollDelta);
+    viewport.scrollTop = dragStartScroll + scrollDelta;
+    event.preventDefault();
   });
 
-  window.addEventListener("mouseup", () => {
+  thumb.addEventListener("pointerup", (event) => {
     if (!dragging) return;
+    dragging = false;
+    thumb.classList.remove("dragging");
+    if (thumb.hasPointerCapture(event.pointerId)) {
+      thumb.releasePointerCapture(event.pointerId);
+    }
+  });
+
+  thumb.addEventListener("pointercancel", () => {
     dragging = false;
     thumb.classList.remove("dragging");
   });
 
   const resizeObserver = new ResizeObserver(updateThumb);
-  resizeObserver.observe(els.scrollViewport);
+  resizeObserver.observe(viewport);
   resizeObserver.observe(els.appContent);
   updateThumb();
 }
 
 initVerticalScrollRail();
+syncPanelViewportHeight();
+window.addEventListener("resize", syncPanelViewportHeight);
 
 checkConnection();
 setInterval(checkConnection, 4000);

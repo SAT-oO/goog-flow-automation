@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="panel.css" />
   </head>
   <body>
-    <div class="panel-shell">
+    <div class="panel-shell" id="panelShell">
       <div class="scroll-viewport" id="scrollViewport">
         <div class="app" id="appContent">
       <header class="header">
@@ -23,14 +23,9 @@
         <span id="statusText">Checking connection…</span>
       </section>
 
-      <section class="agent-mode-bar hidden" id="agentModeBar" aria-live="polite">
-        <div class="agent-mode-track">
-          <div class="agent-mode-fill" id="agentModeFill"></div>
-        </div>
-        <div class="agent-mode-copy">
-          <span class="agent-mode-label" id="agentModeLabel">Agent mode</span>
-          <span class="agent-mode-detail" id="agentModeDetail"></span>
-        </div>
+      <section class="status-bar hidden" id="agentModeBar" aria-live="polite">
+        <span class="status-dot" id="agentModeDot"></span>
+        <span id="agentModeText">Agent mode</span>
       </section>
 
       <section class="alert hidden" id="agentAlert">
