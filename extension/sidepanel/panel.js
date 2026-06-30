@@ -173,6 +173,24 @@ function queueStatusLabel(status, item) {
   return "";
 }
 
+function restoreItemStatuses(saved, promptList) {
+  if (!saved || typeof saved !== "object") return {};
+
+  const restored = {};
+  for (const [key, item] of Object.entries(saved)) {
+    const index = Number(key);
+    if (!Number.isInteger(index) || index < 0 || index >= promptList.length) continue;
+    if (item?.prompt && item.prompt !== promptList[index]) continue;
+    restored[index] = item;
+  }
+  return restored;
+}
+
+function promptsListChanged(nextPrompts) {
+  if (nextPrompts.length !== prompts.length) return true;
+  return nextPrompts.some((prompt, index) => prompt !== prompts[index]);
+}
+
 function resolveItemStatus(index) {
   const existing = itemStatuses[index];
   if (existing?.status) return existing;
@@ -517,15 +535,22 @@ function clearPrompts() {
   if (running || !els.promptInput.value.trim()) return;
 
   els.promptInput.value = "";
-  refreshPromptsFromInput();
+  itemStatuses = {};
+  chrome.runtime.sendMessage({ type: "CLEAR_QUEUE_ITEM_STATUSES" }).catch(() => {});
+  refreshPromptsFromInput({ resetStatuses: false });
   showPromptsClearedFeedback();
   checkConnection();
   els.promptInput.focus();
 }
 
-function refreshPromptsFromInput() {
-  prompts = parsePrompts(els.promptInput.value);
-  itemStatuses = {};
+function refreshPromptsFromInput({ resetStatuses = true } = {}) {
+  const nextPrompts = parsePrompts(els.promptInput.value);
+  const changed = resetStatuses && promptsListChanged(nextPrompts);
+  prompts = nextPrompts;
+  if (changed) {
+    itemStatuses = {};
+    chrome.runtime.sendMessage({ type: "CLEAR_QUEUE_ITEM_STATUSES" }).catch(() => {});
+  }
   renderQueue();
   updateClearButtonState();
   chrome.storage.local.set({
@@ -781,29 +806,39 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-chrome.storage.local.get(["savedPromptText", "savedFolder", "queueState"], (result) => {
-  if (result.savedPromptText) els.promptInput.value = result.savedPromptText;
-  if (result.savedFolder) els.folderInput.value = result.savedFolder;
-  refreshPromptsFromInput();
-});
+async function initPanel() {
+  const [storage, response] = await Promise.all([
+    chrome.storage.local.get(["savedPromptText", "savedFolder"]),
+    chrome.runtime.sendMessage({ type: "GET_QUEUE_STATE" }),
+  ]);
 
-chrome.runtime.sendMessage({ type: "GET_QUEUE_STATE" }).then((response) => {
-  const delay = response?.data?.interRequestDelayMs;
+  if (storage.savedPromptText) els.promptInput.value = storage.savedPromptText;
+  if (storage.savedFolder) els.folderInput.value = storage.savedFolder;
+  refreshPromptsFromInput({ resetStatuses: false });
+
+  const data = response?.data || {};
+
+  if (!data.restartPending) {
+    itemStatuses = restoreItemStatuses(data.itemStatuses, prompts);
+    renderQueue();
+  }
+
+  const delay = data.interRequestDelayMs;
   if (delay) els.delayLabel.textContent = String(delay);
-  if (response?.data?.maxGenerationAttempts) {
-    maxGenerationAttempts = response.data.maxGenerationAttempts;
+  if (data.maxGenerationAttempts) {
+    maxGenerationAttempts = data.maxGenerationAttempts;
     if (els.retryAttemptsLabel) {
       els.retryAttemptsLabel.textContent = String(maxGenerationAttempts);
     }
   }
-  if (response?.data?.maxRetryDelayMs) {
+  if (data.maxRetryDelayMs) {
     const retryNote = document.querySelector(".footer p:nth-child(2)");
     if (retryNote) {
       retryNote.innerHTML =
-        `Failed generations retry up to <strong>${maxGenerationAttempts}</strong> times with exponential backoff (up to <strong>${Math.round(response.data.maxRetryDelayMs / 1000)} s</strong> between attempts).`;
+        `Failed generations retry up to <strong>${maxGenerationAttempts}</strong> times with exponential backoff (up to <strong>${Math.round(data.maxRetryDelayMs / 1000)} s</strong> between attempts).`;
     }
   }
-  if (response?.data?.restartPending) {
+  if (data.restartPending) {
     restartPending = true;
     running = false;
     paused = false;
@@ -815,19 +850,22 @@ chrome.runtime.sendMessage({ type: "GET_QUEUE_STATE" }).then((response) => {
     renderQueue();
     updateProgress(0, prompts.length, "Restart ready — press Start generation to run from prompt 1");
     checkConnection();
-  } else if (response?.data?.running) {
+  } else if (data.running) {
     running = true;
-    paused = Boolean(response.data.paused);
-    currentQueueIndex = response.data.currentIndex ?? -1;
+    paused = Boolean(data.paused);
+    currentQueueIndex = data.currentIndex ?? -1;
     els.startBtn.disabled = true;
     els.stopBtn.disabled = false;
     updatePauseButton();
     updateClearButtonState();
+    renderQueue();
     if (currentQueueIndex >= 0) {
-      updateProgress(currentQueueIndex, response.data.prompts?.length || prompts.length, "");
+      updateProgress(currentQueueIndex, data.prompts?.length || prompts.length, "");
     }
   }
-});
+}
+
+initPanel();
 
 loadErrorLogs();
 

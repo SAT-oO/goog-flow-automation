@@ -7,12 +7,9 @@
 const CONTENT_SCRIPT_FILES = [
   "content/lib/dom.js",
   "content/lib/targeting.js",
-  "content/lib/input-sync.js",
-  "content/lib/submitter.js",
-  "content/lib/ui-idle.js",
   "content/lib/agent.js",
   "content/lib/images.js",
-  "content/lib/lifecycle.js",
+  "content/lib/composer.js",
   "content/flow.js",
 ];
 
@@ -40,6 +37,7 @@ const state = {
   prompts: [],
   folder: "flow-images",
   flowTabId: null,
+  itemStatuses: {},
 };
 
 const MAX_ERROR_LOGS = 500;
@@ -94,6 +92,13 @@ function broadcast(message) {
 }
 
 function updateQueueStatus(patch) {
+  if (patch.clearItemStatuses) {
+    state.itemStatuses = {};
+    saveState();
+  } else if (patch.itemStatus) {
+    state.itemStatuses[patch.itemStatus.index] = patch.itemStatus;
+    saveState();
+  }
   broadcast({ type: "QUEUE_UPDATE", data: patch });
 }
 
@@ -106,6 +111,7 @@ async function saveState() {
       currentIndex: state.currentIndex,
       prompts: state.prompts,
       folder: state.folder,
+      itemStatuses: state.itemStatuses,
     },
   });
 }
@@ -451,6 +457,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         state.stopRequested = false;
         state.paused = false;
         state.restartPending = false;
+        state.itemStatuses = {};
+        await saveState();
         processQueue();
         return { success: true };
       }
@@ -506,6 +514,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         updateQueueStatus({ running: false, stopped: true, currentIndex: state.currentIndex });
         return { success: true };
       }
+      case "CLEAR_QUEUE_ITEM_STATUSES": {
+        state.itemStatuses = {};
+        await saveState();
+        return { success: true };
+      }
       case "GET_QUEUE_STATE":
         return {
           success: true,
@@ -516,6 +529,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             currentIndex: state.currentIndex,
             prompts: state.prompts,
             folder: state.folder,
+            itemStatuses: state.itemStatuses,
             interRequestDelayMs: INTER_REQUEST_DELAY_MS,
             maxRetryDelayMs: MAX_RETRY_DELAY_MS,
             initialRetryDelayMs: INITIAL_RETRY_DELAY_MS,
@@ -563,6 +577,7 @@ chrome.storage.local.get(["queueState"], (result) => {
   state.prompts = saved.prompts || [];
   state.folder = saved.folder || "flow-images";
   state.currentIndex = saved.currentIndex || 0;
+  state.itemStatuses = saved.itemStatuses || {};
 });
 
 console.log("Flow Image Automator background worker ready");

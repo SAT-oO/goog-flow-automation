@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Flow Image Automator",
   "description": "Queue and auto-generate images on Google Flow with sequential prompts and auto-download.",
-  "version": "1.3.4",
+  "version": "1.4.0",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -46,15 +46,13 @@
       "js": [
         "content/lib/dom.js",
         "content/lib/targeting.js",
-        "content/lib/input-sync.js",
-        "content/lib/submitter.js",
-        "content/lib/ui-idle.js",
         "content/lib/agent.js",
         "content/lib/images.js",
-        "content/lib/lifecycle.js",
+        "content/lib/composer.js",
         "content/flow.js"
       ],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ]
 }
