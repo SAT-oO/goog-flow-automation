@@ -169,17 +169,27 @@
       throw new Error("Could not find the Google Flow prompt input");
     }
 
-    const isSlate = input.getAttribute("data-slate-editor") === "true";
+    const isSlate =
+      input.getAttribute("data-slate-editor") === "true" || Boolean(Composer.getSlateEditor());
 
-    if (!isSlate) {
+    if (isSlate) {
+      await Composer.writeSlate(text);
+    } else {
       await Composer.writeSimple(input, text);
     }
 
-    if (!Composer.isSubmitReady()) {
+    const promptSnippet = text.slice(0, 48);
+    const hasText = () => Targeting.readPromptText().includes(promptSnippet);
+
+    if (!hasText() || !Composer.isSubmitReady()) {
       await Composer.writeSlate(text);
     }
 
-    if (!Composer.isSubmitReady()) {
+    if (!hasText() || !Composer.isSubmitReady()) {
+      await Composer.writeSimple(input, text);
+    }
+
+    if (!hasText() || !Composer.isSubmitReady()) {
       input.focus();
       await DOM.sleep(80);
       const pasted = document.execCommand("insertText", false, text);
@@ -187,6 +197,10 @@
         Composer.dispatchFrameworkEvents(input, text);
         await DOM.sleep(SETTLE_MS);
       }
+    }
+
+    if (!hasText()) {
+      throw new Error("Could not write prompt text into Google Flow composer");
     }
 
     await Composer.waitForSubmitEnabled();
@@ -197,6 +211,9 @@
     const button = Targeting.findSubmitButton();
     if (!button) {
       throw new Error("Generate button not found");
+    }
+    if (Targeting.isAttachmentButton(button)) {
+      throw new Error("Found attachment button instead of Generate — update targeting");
     }
     if (button.disabled) {
       throw new Error("Generate button is disabled");

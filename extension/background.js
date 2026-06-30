@@ -506,12 +506,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return { success: true };
       }
       case "STOP_QUEUE": {
-        state.restartPending = false;
+        if (!state.running) {
+          return { success: false, error: "Nothing is running" };
+        }
+        state.restartPending = true;
         state.stopRequested = true;
+        state.paused = false;
+        state.currentIndex = 0;
         if (state.flowTabId) {
           chrome.tabs.sendMessage(state.flowTabId, { type: "STOP_GENERATION" }).catch(() => {});
         }
-        updateQueueStatus({ running: false, stopped: true, currentIndex: state.currentIndex });
         return { success: true };
       }
       case "CLEAR_QUEUE_ITEM_STATUSES": {

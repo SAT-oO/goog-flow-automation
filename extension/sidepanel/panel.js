@@ -643,15 +643,19 @@ async function restartGeneration() {
 }
 
 async function stopGeneration() {
-  await chrome.runtime.sendMessage({ type: "STOP_QUEUE" });
-  els.stopBtn.disabled = true;
-  paused = false;
-  updatePauseButton();
-  updateProgress(
-    currentQueueIndex >= 0 ? currentQueueIndex : 0,
-    prompts.length,
-    "Stopping after current step…"
-  );
+  if (!running) return;
+
+  const response = await chrome.runtime.sendMessage({ type: "STOP_QUEUE" });
+  if (!response?.success) {
+    updateProgress(
+      currentQueueIndex >= 0 ? currentQueueIndex : 0,
+      prompts.length,
+      response?.error || "Could not stop"
+    );
+    return;
+  }
+
+  updateProgress(0, prompts.length, "Stopping — press Start generation when ready…");
 }
 
 async function togglePause() {
@@ -739,7 +743,7 @@ chrome.runtime.onMessage.addListener((message) => {
     updateClearButtonState();
     renderQueue();
     if (data.restartPending) {
-      updateProgress(0, prompts.length, "Restart ready — press Start generation to run from prompt 1");
+      updateProgress(0, prompts.length, "Reset to prompt 1 — press Start generation to run again");
       checkConnection();
     }
     return;
