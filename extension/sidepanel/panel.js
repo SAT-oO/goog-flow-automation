@@ -480,6 +480,12 @@ function updatePauseButton() {
     els.restartBtn.classList.toggle("hidden", !running || !paused);
     els.restartBtn.disabled = !running || !paused;
   }
+
+  if (els.stopBtn) {
+    const showStop = running && !paused;
+    els.stopBtn.classList.toggle("hidden", !showStop);
+    els.stopBtn.disabled = !showStop;
+  }
 }
 
 function showPreviewRefreshFeedback() {
@@ -874,6 +880,7 @@ initPanel();
 loadErrorLogs();
 
 updateClearButtonState();
+updatePauseButton();
 
 const manifest = chrome.runtime.getManifest();
 if (manifest?.version) {

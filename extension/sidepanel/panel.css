@@ -527,11 +527,17 @@ input:focus {
   gap: 8px;
 }
 
-#restartBtn.hidden {
+#restartBtn.hidden,
+#stopBtn.hidden {
   display: none !important;
 }
 
-.actions:has(#restartBtn.hidden) {
+.actions:has(#restartBtn.hidden):has(#stopBtn.hidden) {
+  grid-template-columns: 1fr auto;
+}
+
+.actions:has(#restartBtn.hidden):not(:has(#stopBtn.hidden)),
+.actions:has(#stopBtn.hidden):not(:has(#restartBtn.hidden)) {
   grid-template-columns: 1fr auto auto;
 }
 
