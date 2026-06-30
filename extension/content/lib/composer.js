@@ -29,7 +29,9 @@
 
   Composer.isSubmitReady = () => {
     const btn = Targeting.findSubmitButton();
-    return Boolean(btn && !btn.disabled);
+    if (!btn || btn.disabled) return false;
+    if (Targeting.isAttachmentButton(btn)) return false;
+    return Targeting.hasSubmitIcon(btn) || Targeting.matchesSubmitLabel(btn);
   };
 
   Composer.waitFor = async (predicate, timeoutMs, errorMessage) => {
@@ -215,6 +217,9 @@
     if (Targeting.isAttachmentButton(button)) {
       throw new Error("Found attachment button instead of Generate — update targeting");
     }
+    if (!Targeting.hasSubmitIcon(button) && !Targeting.matchesSubmitLabel(button)) {
+      throw new Error("Found a non-submit control instead of Generate — update targeting");
+    }
     if (button.disabled) {
       throw new Error("Generate button is disabled");
     }
@@ -255,21 +260,19 @@
     if (isAborted()) throw new Error("Stopped by user");
 
     await Agent.ensureOff();
-    await Composer.clickGenerate();
+    await Composer.submitViaEnter(promptInput);
 
-    if (!Composer.isGenerationActive()) {
-      await Composer.submitViaEnter(promptInput);
-    }
-
+    let method = "enter";
     if (!Composer.isGenerationActive()) {
       await Composer.clickGenerate();
+      method = "click";
     }
 
     if (!Composer.isGenerationActive()) {
-      throw new Error("Submit did not start generation — Generate button click had no effect");
+      throw new Error("Submit did not start generation — prompt submit had no effect");
     }
 
-    return { method: "click" };
+    return { method };
   };
 
   Composer.waitForNewImages = async (baselineImages, isAborted = () => false) => {

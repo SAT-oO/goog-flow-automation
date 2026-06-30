@@ -50,19 +50,47 @@
     "file",
     "media",
     "ingredient",
+    "reference",
+    "pin",
+    "image",
+    "photo",
+    "video",
+    "audio",
   ];
+
+  const SUBMIT_ICONS = new Set([
+    "arrow_forward",
+    "send",
+    "north",
+    "east",
+    "navigate_next",
+  ]);
 
   const ATTACH_ICONS = new Set([
     "attach_file",
     "add",
     "add_circle",
+    "add_circle_outline",
     "upload",
     "file_upload",
     "image",
     "perm_media",
     "add_photo_alternate",
     "collections",
+    "photo_library",
+    "landscape",
+    "control_point",
   ]);
+
+  const ICON_SELECTORS = [
+    "i.google-symbols",
+    "i.material-icons",
+    "i.material-symbols-outlined",
+    "i.material-symbols-rounded",
+    "span.google-symbols",
+    "span.material-symbols-outlined",
+    "span.material-symbols-rounded",
+  ];
 
   const PROMPT_SELECTORS = [
     "#PINHOLE_TEXT_AREA_ELEMENT_ID",
@@ -105,29 +133,6 @@
     return { text, aria };
   };
 
-  Targeting.getButtonIconName = (btn) => {
-    const icon = btn.querySelector("i.google-symbols, i.material-icons, span.google-symbols");
-    return (icon?.textContent || "").trim();
-  };
-
-  Targeting.shouldAvoidSubmitButton = (btn) => {
-    const { text, aria } = Targeting.normalizedLabel(btn);
-    return SUBMIT_AVOID.some((word) => text.includes(word) || aria.includes(word));
-  };
-
-  Targeting.isAttachmentButton = (btn) => {
-    const { text, aria } = Targeting.normalizedLabel(btn);
-    const icon = Targeting.getButtonIconName(btn);
-    if (ATTACH_ICONS.has(icon)) return true;
-    return (
-      aria.includes("attach") ||
-      aria.includes("upload") ||
-      aria.includes("add image") ||
-      text.includes("attach") ||
-      text.includes("upload")
-    );
-  };
-
   Targeting.matchesSubmitLabel = (el) => {
     const { text, aria } = Targeting.normalizedLabel(el);
     return (
@@ -136,66 +141,159 @@
     );
   };
 
-  Targeting.isGenerateButton = (btn) => {
-    if (!DOM.isVisible(btn) || btn.disabled) return false;
-    if (Targeting.shouldAvoidSubmitButton(btn)) return false;
-    if (Targeting.isAttachmentButton(btn)) return false;
+  Targeting.getButtonIconName = (btn) => {
+    for (const selector of ICON_SELECTORS) {
+      const icon = btn.querySelector(selector);
+      const text = (icon?.textContent || "").trim();
+      if (text) return text;
+    }
+
+    for (const child of btn.querySelectorAll("span, i")) {
+      const text = (child.textContent || "").trim();
+      if (text && text.length <= 32 && !/\s/.test(text)) return text;
+    }
+
+    return "";
+  };
+
+  Targeting.shouldAvoidSubmitButton = (btn) => {
+    const { text, aria } = Targeting.normalizedLabel(btn);
+    if (SUBMIT_AVOID.some((word) => text.includes(word) || aria.includes(word))) return true;
+
+    const icon = Targeting.getButtonIconName(btn).toLowerCase();
+    if (ATTACH_ICONS.has(icon)) return true;
+    if (icon.startsWith("add")) return true;
+
+    const testId = (btn.getAttribute("data-testid") || "").toLowerCase();
+    if (/attach|upload|file|media|ingredient|reference|add[-_]?image/i.test(testId)) return true;
+
+    return false;
+  };
+
+  Targeting.isAttachmentButton = (btn) => {
+    if (Targeting.shouldAvoidSubmitButton(btn)) {
+      const icon = Targeting.getButtonIconName(btn).toLowerCase();
+      if (SUBMIT_ICONS.has(icon)) return false;
+      if (Targeting.matchesSubmitLabel(btn)) return false;
+      return true;
+    }
+
+    const { text, aria } = Targeting.normalizedLabel(btn);
+    const icon = Targeting.getButtonIconName(btn).toLowerCase();
+
+    if (ATTACH_ICONS.has(icon)) return true;
+    if (icon.startsWith("add")) return true;
+
     return (
-      Targeting.matchesSubmitLabel(btn) || Targeting.getButtonIconName(btn) === "arrow_forward"
+      aria === "add" ||
+      aria.startsWith("add ") ||
+      aria.includes("attach") ||
+      aria.includes("upload") ||
+      aria.includes("add image") ||
+      aria.includes("ingredient") ||
+      text.includes("attach") ||
+      text.includes("upload")
     );
   };
 
-  Targeting.findSubmitButtonInComposer = () => {
-    const prompt = Targeting.getPromptInput();
-    if (!prompt) return null;
+  Targeting.hasSubmitIcon = (btn) => {
+    const icon = Targeting.getButtonIconName(btn).toLowerCase();
+    return SUBMIT_ICONS.has(icon);
+  };
 
-    const scopes = [];
-    let el = prompt.parentElement;
-    for (let depth = 0; depth < 8 && el; depth += 1) {
-      scopes.push(el);
-      el = el.parentElement;
+  Targeting.scoreSubmitButton = (btn, prompt) => {
+    if (!DOM.isVisible(btn) || btn.disabled) return -1000;
+    if (Targeting.isAttachmentButton(btn)) return -1000;
+    if (Targeting.shouldAvoidSubmitButton(btn) && !Targeting.hasSubmitIcon(btn)) return -1000;
+
+    let score = 0;
+    const icon = Targeting.getButtonIconName(btn).toLowerCase();
+    const btnRect = btn.getBoundingClientRect();
+    const promptRect = prompt?.getBoundingClientRect();
+
+    if (icon === "arrow_forward") score += 250;
+    else if (SUBMIT_ICONS.has(icon)) score += 180;
+    else if (ATTACH_ICONS.has(icon) || icon.startsWith("add")) return -1000;
+
+    if (Targeting.matchesSubmitLabel(btn)) score += 120;
+
+    if (btn.getAttribute("type") === "submit") score += 40;
+
+    if (promptRect && btnRect.width > 0) {
+      if (btnRect.left >= promptRect.right - 140) score += 90;
+      else if (btnRect.left < promptRect.left + promptRect.width * 0.45) score -= 80;
     }
 
-    const seen = new Set();
-    let candidates = [];
+    if (btnRect.width > 0 && btnRect.height > 0 && btnRect.width <= 64 && btnRect.height <= 64) {
+      score += 15;
+    }
 
-    for (const scope of scopes) {
-      candidates = [];
-      for (const btn of DOM.queryAllDeep("button", scope)) {
-        if (seen.has(btn)) continue;
-        seen.add(btn);
-        if (Targeting.isGenerateButton(btn)) candidates.push(btn);
+    return score;
+  };
+
+  Targeting.pickBestSubmitButton = (buttons, prompt) => {
+    let best = null;
+    let bestScore = 0;
+
+    for (const btn of buttons) {
+      const score = Targeting.scoreSubmitButton(btn, prompt);
+      if (score > bestScore) {
+        bestScore = score;
+        best = btn;
       }
-      if (candidates.length > 0) break;
     }
 
-    if (!candidates.length) return null;
+    if (!best || bestScore < 80) return null;
+    return best;
+  };
 
-    const labeled = candidates.find((btn) => Targeting.matchesSubmitLabel(btn));
-    if (labeled) return labeled;
+  Targeting.collectComposerButtons = () => {
+    const prompt = Targeting.getPromptInput();
+    if (!prompt) return { prompt: null, buttons: [] };
 
-    const arrow = candidates.find((btn) => Targeting.getButtonIconName(btn) === "arrow_forward");
-    if (arrow) return arrow;
+    const root = Targeting.getComposerRoot();
+    const seen = new Set();
+    const buttons = [];
 
-    return candidates[candidates.length - 1];
+    for (const btn of DOM.queryAllDeep("button", root)) {
+      if (seen.has(btn)) continue;
+      seen.add(btn);
+      buttons.push(btn);
+    }
+
+    return { prompt, buttons };
+  };
+
+  Targeting.isGenerateButton = (btn) => {
+    if (!DOM.isVisible(btn) || btn.disabled) return false;
+    if (Targeting.isAttachmentButton(btn)) return false;
+    return Targeting.hasSubmitIcon(btn) || Targeting.matchesSubmitLabel(btn);
+  };
+
+  Targeting.findSubmitButtonInComposer = () => {
+    const { prompt, buttons } = Targeting.collectComposerButtons();
+    if (!prompt) return null;
+    return Targeting.pickBestSubmitButton(buttons, prompt);
   };
 
   Targeting.findSubmitButtonByAria = () => {
-    for (const btn of DOM.queryAllDeep("button", Targeting.getComposerRoot())) {
-      if (!Targeting.isGenerateButton(btn)) continue;
+    const { prompt, buttons } = Targeting.collectComposerButtons();
+    const matches = buttons.filter((btn) => {
+      if (!Targeting.isGenerateButton(btn)) return false;
       const aria = (btn.getAttribute("aria-label") || "").toLowerCase();
-      if (SUBMIT_ARIA.some((label) => aria.includes(label))) return btn;
-    }
-    return null;
+      return SUBMIT_ARIA.some((label) => aria.includes(label));
+    });
+    return Targeting.pickBestSubmitButton(matches, prompt);
   };
 
   Targeting.findSubmitButtonByText = () => {
-    for (const btn of DOM.queryAllDeep("button", Targeting.getComposerRoot())) {
-      if (!Targeting.isGenerateButton(btn)) continue;
+    const { prompt, buttons } = Targeting.collectComposerButtons();
+    const matches = buttons.filter((btn) => {
+      if (!Targeting.isGenerateButton(btn)) return false;
       const text = (btn.textContent || "").trim().toLowerCase();
-      if (SUBMIT_LABELS.some((label) => text === label || text.includes(label))) return btn;
-    }
-    return null;
+      return SUBMIT_LABELS.some((label) => text === label || text.includes(label));
+    });
+    return Targeting.pickBestSubmitButton(matches, prompt);
   };
 
   Targeting.findSubmitButton = () =>
